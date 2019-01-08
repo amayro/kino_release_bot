@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import time
@@ -8,6 +9,7 @@ import requests
 import telebot
 from bs4 import BeautifulSoup
 from telebot import apihelper
+from telebot import logger
 from telebot.types import Message
 
 from config import TOKEN
@@ -15,32 +17,53 @@ from config import TOKEN
 file_json = 'data_url.json'
 chats_json = 'data_chats.json'
 
-KEY_MEGA_FILM = 'mega_f'
-KEY_MEGA_SERIAL = 'mega_s'
-
-sites = {   # sites for parsing
-    KEY_MEGA_FILM: 'http://megashara.com/movies',
-    KEY_MEGA_SERIAL: 'http://megashara.com/tv'
-}
-
 apihelper.proxy = {
     'http': 'socks5://45.63.66.99:1080',
     'https': 'socks5://45.63.66.99:1080',
 }
 
+KEY_MEGA_FILM = 'mega_f'
+KEY_MEGA_SERIAL = 'mega_s'
+KEY_NEWSTUDIO = 'ns'
+
+sites = {   # sites for parsing
+    KEY_MEGA_FILM: 'http://megashara.com/movies',
+    KEY_MEGA_SERIAL: 'http://megashara.com/tv',
+    KEY_NEWSTUDIO: [
+        'http://newstudio.tv/viewforum.php?f=444&sort=2',    # Миллиарды
+        'http://newstudio.tv/viewforum.php?f=206&sort=2',    # Форс-мажоры
+        'http://newstudio.tv/viewforum.php?f=702&sort=2',    # Ты
+        'http://newstudio.tv/viewforum.php?f=648&sort=2',    # Рассказ служанки
+        'http://newstudio.tv/viewforum.php?f=627&sort=2',    # Иллюзия (обман)
+    ]
+}
+
+# codes for command (CC) last and more
+CC_MEGA_FILM = 'mf'
+CC_MEGA_SERIAL = 'ms'
+CC_NEWSTUDIO = 'ns'
+CC_ALL = 'all'
+
 commands = {  # command description used in the "help" command
     'start': 'начать использовать бота',
     'help': 'показать доступные команды',
-    'last': 'показать последние релизы',
-    'more_(1)_(2)': 'показать полную информацию о фильме или сериале, где\n'
-                    '(1) -код сайта:\n'
-                    f'{" ":6}(mf - megashara фильм),\n'
-                    f'{" ":6}(ms - megashara сериал),\n'
-                    '(2) - id релиза ',
+    'last X': 'показать последние релизы, где\n'
+              'X - опционально:\n'
+              f'{" ":6}{CC_MEGA_FILM} - последние релизы фильмов Megashara\n'
+              f'{" ":6}{CC_MEGA_SERIAL} - последние релизы сериалов Megashara\n'
+              f'{" ":6}{CC_NEWSTUDIO} - последние релизы из подписки сериалов Newstudio\n'
+              f'{" ":6}{CC_ALL} - все релизы в подписке\n'
+              f'(если X не указано, то выведет {CC_MEGA_FILM}+{CC_MEGA_SERIAL})\n',
+    'more_X_Y': 'показать полную информацию о фильме или сериале, где\n'
+                'X - код сайта:\n'
+                f'{" ":6}{CC_MEGA_FILM} - megashara фильм,\n'
+                f'{" ":6}{CC_MEGA_SERIAL} - megashara сериал,\n'
+                'Y - id релиза ',
     'ip': 'показать ip и регион бота',
     'ping_megashara': 'получить статус сайта megashara',
 }
 
+telebot.logger.setLevel(logging.INFO)
 bot = telebot.TeleBot(TOKEN)
 
 
@@ -63,7 +86,7 @@ def command_start(message: Message):
 @bot.message_handler(commands=['help'])
 def command_help(message: Message):
     help_text = "Доступны следующие команды: \n"
-    for key in commands:  # generate help text out of the commands dictionary defined at the top
+    for key in commands:
         help_text += "/" + key + " - "
         help_text += commands[key] + "\n"
     bot.send_message(message.chat.id, help_text)
@@ -71,17 +94,43 @@ def command_help(message: Message):
 
 @bot.message_handler(commands=['last'])
 def command_last(message: Message):
+    unique_code = message.text.split()[1] if len(message.text.split()) > 1 else None
+    exclude = []
+    if unique_code == CC_ALL:
+        reply_wait = 'Придется подождать.. (~1мин.) Подписок много.. Ушёл, за информацией..'
+    elif unique_code == CC_MEGA_SERIAL:
+        exclude = [KEY_MEGA_FILM, KEY_NEWSTUDIO]
+        reply_wait = 'Подождите.. Получаю информацию о последних релизах сериалов Megashara..'
+    elif unique_code == CC_NEWSTUDIO:
+        exclude = [KEY_MEGA_FILM, KEY_MEGA_SERIAL]
+        reply_wait = 'Придется подождать.. (~1мин.) Получаю информацию о последних релизах Newstudio..'
+    else:
+        exclude = [KEY_NEWSTUDIO]
+        reply_wait = 'Подождите.. Получаю информацию о последних релизах Megashara..'
+
+    bot.reply_to(message, reply_wait)
     data = load_check_urls_json()[0]
 
     reply_full = ''
-    bot.reply_to(message, 'Получаю информацию о последних релизах..')
     for key in data:
+        if key in exclude:
+            continue
         reply = '<b>Фильмы: </b>' if key == KEY_MEGA_FILM else '<b>Сериалы: </b>'
+
         if key in [KEY_MEGA_FILM, KEY_MEGA_SERIAL]:
             reply += '(Megashara)\n'
+        elif key == KEY_NEWSTUDIO:
+            reply += '(Newstudio)\n'
+
         limit = 5
-        count = limit if limit < len(data[key]) else len(data[key])
-        lst_urls = list(reversed(data[key]))[:count]
+        if type(data[key]) == list:
+            count = limit if limit < len(data[key]) else len(data[key])
+            lst_urls = data[key][-count:]
+        else:
+            lst_urls = []
+            for k_serial in data[key].keys():
+                count = limit if limit < len(data[key][k_serial]) else len(data[key][k_serial])
+                lst_urls.extend(data[key][k_serial][-count:])
         reply += get_info_less(lst_urls)
         reply_full += reply + '\n'
     bot.send_message(message.chat.id, reply_full, parse_mode='HTML')
@@ -105,17 +154,15 @@ def command_ping_megashara(message: Message):
 
 @bot.message_handler(content_types=['text'])
 def get_more_film(message: Message):
-    print(message.chat.id)
-
     if message.text.startswith('/more_'):
         msg_split = message.text.split('_')
         if len(msg_split) == 3:
             bot.reply_to(message, 'Получаю информацию о релизе..')
             data_url = load_check_urls_json()[0]
 
-            if msg_split[1] == 'mf':
+            if msg_split[1] == CC_MEGA_FILM:
                 key = KEY_MEGA_FILM
-            elif msg_split[1] == 'ms':
+            elif msg_split[1] == CC_MEGA_SERIAL:
                 key = KEY_MEGA_SERIAL
             else:
                 key = None
@@ -132,7 +179,7 @@ def get_more_film(message: Message):
     bot.reply_to(message, reply)
 
 
-def parsing_site(site, count=3):
+def parsing_site(site, count=9):
     """parsing site, return list pars_urls"""
     response = requests.get(site, proxies=apihelper.proxy)
     soup = BeautifulSoup(response.content, 'html.parser')
@@ -140,105 +187,151 @@ def parsing_site(site, count=3):
     if 'megashara' in site:
         response = list(map(lambda x: f"{x.a['href']}",
                             soup.find('div', id='mid-side').findAll('div', class_='name-block')))[:count]
-    return response
+
+    elif 'newstudio' in site:
+        site_url = 'http://newstudio.tv'
+        response = list(map(lambda x: f"{site_url}{x.a['href'][1:]}",
+                            soup.findAll('div', class_='topic-list')))[:count]
+    return list(reversed(response))
 
 
 def get_info_less(urls):
     """get short movie description"""
 
+    # convert in list if input url is string
     if type(urls) == str:
         urls = [urls]
 
     reply = ''
     for url in urls:
-        # parsing for megashara
-        if 'megashara' in url:
-            response = requests.get(url, proxies=apihelper.proxy)
-            soup = BeautifulSoup(response.content, 'html.parser')
-            pars_block = soup.select_one('#mid-side')
+        try:
+            # parsing for megashara
+            if 'megashara' in url:
+                response = requests.get(url, proxies=apihelper.proxy)
+                soup = BeautifulSoup(response.content, 'html.parser')
+                pars_block = soup.select_one('#mid-side')
 
-            title = pars_block.h1.text
+                title = pars_block.h1.text
 
-            if len(urls) == 1:
-                if url.startswith(sites[KEY_MEGA_FILM]):
-                    kind = 'Фильм'
-                elif url.startswith(sites[KEY_MEGA_SERIAL]):
-                    kind = 'Сериал'
+                if len(urls) == 1:
+                    if url.startswith(sites[KEY_MEGA_FILM]):
+                        kind = 'Фильм'
+                    else:
+                        kind = 'Сериал'
 
-                photo = pars_block.select_one('.preview img')['src']
-                reply += f"<b>{kind}</b><a href='{photo}'>.</a>\n"
+                    photo = pars_block.select_one('.preview img')['src']
+                    reply += f"<b>{kind}</b><a href='{photo}'>.</a>\n"
 
-            url_split = url.split('/')
-            kind_code = 'mf' if url_split[3] == 'movies' else 'ms'
-            link_more = f'/more_{kind_code}_' + url_split[4]
+                url_split = url.split('/')
+                kind_code = 'mf' if url_split[3] == 'movies' else 'ms'
+                link_more = f'/more_{kind_code}_' + url_split[4]
 
-            reply += (
-                f"{title} ({link_more})\n\n"
-            )
+                reply += (
+                    f"{title} ({link_more})\n\n"
+                )
 
-    print(reply)
+            # parsing for newstudio
+            elif 'newstudio' in url:
+                response = requests.get(url, proxies=apihelper.proxy)
+                soup = BeautifulSoup(response.content, 'html.parser')
+                pars_block = soup.select_one('.accordion-inner')
+
+                title = pars_block.select_one('.post-b').text
+
+                if "WEBDLRip" not in title:
+                    torrent_dirty = pars_block.select_one('.seedmed')['href']
+                    torrent = 'http://newstudio.tv/' + torrent_dirty
+
+                    if len(urls) == 1:
+                        reply += f"<b> \U0000203C РЕЛИЗ \U0000203C</b>\n"
+
+                    reply += (
+                        f"{title} <a href='{torrent}'> Торрент \U0001F4E5</a>\n\n"
+                    )
+        except Exception as error:
+            logger.exception(error)
+
     return reply
 
 
 def get_info_full(url):
     """get full movie description"""
 
-    # parsing for megashara
-    if 'megashara' in url:
-        response = requests.get(url, proxies=apihelper.proxy)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        pars_block = soup.select_one('#mid-side')
-        table_2 = pars_block.select_one('.back-bg3 .info-table').extract()
-        # print(soup.prettify())
-
-        title = pars_block.h1.text
-        photo = pars_block.select_one('.preview img')['src']
-        genre = pars_block.find(string='Жанр:').next_element.text
-        translate = pars_block.find(string='Перевод:').next_element.text
-        video = table_2.find(string='Видео:').next_element.text
-        audio = table_2.find(string='Звук:').next_element.text
-        size = table_2.find(string='Размер:').next_element.text
-
-        desc_dirty = pars_block.select_one('.back-bg3').text
-        desc_clean = re.sub("\n+", '\n', desc_dirty)
-        description = desc_clean.strip()
-
-        try:
-            kinopoisk_url = pars_block.find(alt='Кинопоиск').previous_element['href']
-            film_id = kinopoisk_url.split('/')[-2]
-            rating_url = f'https://rating.kinopoisk.ru/{film_id}.xml'
-
-            response = requests.get(rating_url)
+    try:
+        # parsing for megashara
+        if 'megashara' in url:
+            response = requests.get(url, proxies=apihelper.proxy)
             soup = BeautifulSoup(response.content, 'html.parser')
-            rating = soup.kp_rating.text
-            kinopoisk_url = f"<a href='{kinopoisk_url}'>перейти</a>"
-        except AttributeError:
-            rating = '-'
-            kinopoisk_url = '-'
+            pars_block = soup.select_one('#mid-side')
+            table_2 = pars_block.select_one('.back-bg3 .info-table').extract()
 
-        reply = (
-            f"<b>Фильм</b><a href='{photo}'>.</a>\n"
-            f"<a href='{url}'>{title}</a>\n"
-            f"Жанр: {genre}\n"
-            f"Перевод: {translate}\n"
-            f"Видео: {video}\n"
-            f"Аудио: {audio}\n"
-            f"Размер: {size}\n"
-            f"Рейтинг: {rating}\n"
-            f"Трейлер: {kinopoisk_url}\n\n"
-            f"{description}\n"
-        )
+            title = pars_block.h1.text
+            photo = pars_block.select_one('.preview img')['src']
 
-        print(reply)
-        return reply
+            # find parent block for specific value
+            bl_genre = pars_block.find(string='Жанр:')
+            bl_country = pars_block.find(string='Студия/Страна:')
+            bl_translate = pars_block.find(string='Перевод:')
+            bl_video = table_2.find(string='Видео:')
+            bl_audio = table_2.find(string='Звук:')
+            bl_size = table_2.find(string='Размер:')
 
+            # get value from block.next_element
+            genre = bl_genre.next_element.text if bl_genre else '-'
+            country = bl_country.next_element.text if bl_country else '-'
+            translate = bl_translate.next_element.text if bl_translate else '-'
+            video = bl_video.next_element.text if bl_video else '-'
+            audio = bl_audio.next_element.text if bl_audio else '-'
+            size = bl_size.next_element.text if bl_size else '-'
 
-url = 'http://megashara.com/movies/889329/pomeshannyi_na_vremeni_time_freak.html'
-url = 'http://megashara.com/tv/889969/chuzhestranka_sezon_4_epizod_10_outlander.html'
-url2 = 'http://megashara.com/movies/889853/discovery_mastera_oruzhiya_01_04_iz_06_mad_dog_made.html'
-# get_info_full(url)
-# get_info_less(url)
-# get_info_less([url, url2])
+            desc_dirty = pars_block.select_one('.back-bg3').text
+            desc_clean = re.sub("\n+", '\n', desc_dirty)
+            description = desc_clean.strip()
+
+            try:
+                kinopoisk_url = pars_block.find(alt='Кинопоиск').previous_element['href']
+                film_id = kinopoisk_url.split('/')[-2]
+                rating_url = f'https://rating.kinopoisk.ru/{film_id}.xml'
+
+                response = requests.get(rating_url)
+                soup = BeautifulSoup(response.content, 'html.parser')
+                rating = soup.kp_rating.text
+                kinopoisk_url = f"<a href='{kinopoisk_url}'>перейти</a>"
+            except AttributeError:
+                rating = '-'
+                kinopoisk_url = '-'
+
+            if url.startswith(sites[KEY_MEGA_FILM]):
+                reply = (
+                    f"<b>Фильм</b><a href='{photo}'>.</a>\n"
+                    f"<a href='{url}'>{title}</a>\n"
+                    f"Жанр: {genre}\n"
+                    f"Студия/Страна: {country}\n"
+                    f"Перевод: {translate}\n"
+                    f"Видео: {video}\n"
+                    f"Аудио: {audio}\n"
+                    f"Размер: {size}\n"
+                    f"Рейтинг: {rating}\n"
+                    f"Трейлер: {kinopoisk_url}\n\n"
+                    f"{description}\n"
+                )
+            else:
+                reply = (
+                    f"<b>Сериал</b><a href='{photo}'>.</a>\n"
+                    f"<a href='{url}'>{title}</a>\n"
+                    f"Рейтинг: {rating}\n"
+                    f"Трейлер: {kinopoisk_url}\n\n"
+                    f"{description}\n"
+                )
+
+            return reply
+
+        else:
+            return 'В разработке'
+
+    except Exception as error:
+        logger.exception(error)
+        return 'Ошибка при получении подробной информации'
 
 
 def load_check_urls_json():
@@ -249,13 +342,27 @@ def load_check_urls_json():
 
         _new_urls = []
         for k_site in sites.keys():
-            if not data_urls.get(k_site):
-                data_urls[k_site] = []
 
-            for url in parsing_site(site=sites[k_site]):
-                if url not in data_urls[k_site]:
-                    _new_urls.append(url)
-                    data_urls[k_site].append(url)
+            if type(sites[k_site]) == str:
+                if not data_urls.get(k_site):
+                    data_urls[k_site] = []
+                pars_urls = parsing_site(site=sites[k_site])
+                for url in pars_urls:
+                    if url not in data_urls[k_site]:
+                        _new_urls.append(url)
+                        data_urls[k_site].append(url)
+            else:
+                if not data_urls.get(k_site):
+                    data_urls[k_site] = {}
+                for url_serial in sites[k_site]:
+                    k_serial = re.findall(r'\?f=(\d+)', url_serial)[0]
+                    if not data_urls[k_site].get(k_serial):
+                        data_urls[k_site][k_serial] = []
+                    pars_urls = parsing_site(site=url_serial)
+                    for url in pars_urls:
+                        if url not in data_urls[k_site][k_serial]:
+                            _new_urls.append(url)
+                            data_urls[k_site][k_serial].append(url)
 
         return data_urls, _new_urls
 
@@ -280,19 +387,13 @@ def listener(messages):
     """When new messages arrive TeleBot will call this function."""
     for m in messages:
         if m.content_type == 'text':
-            time_val = time.strftime("[%Y-%m-%d %H:%M:%S]", time.localtime())
-            print(f"{time_val} {str(m.chat.first_name)} (@{str(m.chat.username)}) [{str(m.chat.id)}]: {m.text}")
-
-
-bot.set_update_listener(listener)
+            logger.info(f"{str(m.chat.first_name)} (@{str(m.chat.username)}) [{str(m.chat.id)}]: {m.text}")
 
 
 def update_data():
     while True:
         try:
-            time_val = time.strftime("[%Y-%m-%d %H:%M:%S]", time.localtime())
-            print(f"{time_val} 'UPDATE'")
-
+            logger.info('UPDATE')
             upd_data, new_data = load_check_urls_json()
 
             if new_data:
@@ -302,35 +403,45 @@ def update_data():
                         continue
 
                     reply = get_info_less(url)
-                    chats = load_chat_json()
-                    for chat in chats.keys():
-                        bot.send_message(int(chat), reply, parse_mode='HTML')
+                    if reply:
+                        chats = load_chat_json()
+                        for chat in chats.keys():
+                            bot.send_message(int(chat), reply, parse_mode='HTML')
 
             time.sleep(5)
-        except Exception as e:
-            print(e)
+        except Exception as error:
+            logger.exception(error)
             time.sleep(10)
 
 
 class UpdatePars(Thread):
     """thread for infinite update_parsing"""
 
+    def __init__(self):
+        Thread.__init__(self)
+        self.name = "UpdatePars"
+
     def run(self):
         update_data()
 
 
-#Start and check file exists
-if not os.path.exists(file_json):
-    dump_data_json({})
+def main():
+    bot.set_update_listener(listener)
 
-if not os.path.exists(chats_json):
-    dump_chat_json({})
+    if not os.path.exists(file_json):
+        dump_data_json({})
+    if not os.path.exists(chats_json):
+        dump_chat_json({})
 
-UpdatePars().start()
+    UpdatePars().start()
 
-while True:
-    try:
-        bot.polling(none_stop=True, interval=0, timeout=60)
-    except Exception as e:
-        print(e)
-        time.sleep(15)
+    while True:
+        try:
+            bot.polling(none_stop=True, interval=0, timeout=60)
+        except Exception as error:
+            logger.exception(error)
+            time.sleep(15)
+
+
+if __name__ == '__main__':
+    main()
