@@ -1,0 +1,8 @@
+/.venv/
+/.idea/
+/__pycache__/
+
+/config.py
+/data_url.json
+/data_chats.json
+
