@@ -393,7 +393,6 @@ def listener(messages):
 def update_data():
     while True:
         try:
-            logger.info('UPDATE')
             upd_data, new_data = load_check_urls_json()
 
             if new_data:
@@ -408,7 +407,7 @@ def update_data():
                         for chat in chats.keys():
                             bot.send_message(int(chat), reply, parse_mode='HTML')
 
-            time.sleep(5)
+            time.sleep(20*60)
         except Exception as error:
             logger.exception(error)
             time.sleep(10)
