@@ -18,10 +18,15 @@ file_json = 'data_url.json'
 chats_json = 'data_chats.json'
 
 try:
-    import config_proxy
-    apihelper.proxy = config_proxy.PROXY_
+    import config_dev
+
+    apihelper.proxy = config_dev.proxy
+    timeout_upd_first = config_dev.timeout_upd_first
+    timeout_upd = config_dev.timeout_upd
 except:
     apihelper.proxy = None
+    timeout_upd_first = 3 * 60
+    timeout_upd = 20 * 60
 
 KEY_MEGA_FILM = 'mega_f'
 KEY_MEGA_SERIAL = 'mega_s'
@@ -159,6 +164,8 @@ def command_ping_megashara(message: Message):
 
 @bot.message_handler(content_types=['text'])
 def get_more_film(message: Message):
+    """command get more info about film or serial"""
+
     if message.text.startswith('/more_'):
         msg_split = message.text.split('_')
         if len(msg_split) == 3:
@@ -200,6 +207,27 @@ def parsing_site(site, count=9):
     return list(reversed(response))
 
 
+def get_ratig_kinopoisk(pars_block):
+    """
+    Find kinopoisk rating on the page and get it
+    :param pars_block: bs4.element-html for search
+    """
+
+    try:
+        kinopoisk_url = pars_block.find(alt='Кинопоиск').previous_element['href']
+        film_id = kinopoisk_url.split('/')[-2]
+        rating_url = f'https://rating.kinopoisk.ru/{film_id}.xml'
+
+        response = requests.get(rating_url)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        rating = soup.kp_rating.text
+        kinopoisk_url = f"<a href='{kinopoisk_url}'>перейти</a>"
+    except AttributeError:
+        rating = '-'
+        kinopoisk_url = '-'
+    return {'rating': rating, 'kinopoisk_url': kinopoisk_url}
+
+
 def get_info_less(urls):
     """get short movie description"""
 
@@ -227,12 +255,15 @@ def get_info_less(urls):
                     photo = pars_block.select_one('.preview img')['src']
                     reply += f"<b>{kind}</b><a href='{photo}'>.</a>\n"
 
+                d_kinopoisk = get_ratig_kinopoisk(pars_block)
+
                 url_split = url.split('/')
-                kind_code = 'mf' if url_split[3] == 'movies' else 'ms'
+                kind_code = CC_MEGA_FILM if url_split[3] == 'movies' else CC_MEGA_SERIAL
                 link_more = f'/more_{kind_code}_' + url_split[4]
 
                 reply += (
-                    f"{title} ({link_more})\n\n"
+                    f"{title}\n"
+                    f"Рейтинг: {d_kinopoisk['rating']} ({link_more})\n\n"
                 )
 
             # parsing for newstudio
@@ -293,18 +324,7 @@ def get_info_full(url):
             desc_clean = re.sub("\n+", '\n', desc_dirty)
             description = desc_clean.strip()
 
-            try:
-                kinopoisk_url = pars_block.find(alt='Кинопоиск').previous_element['href']
-                film_id = kinopoisk_url.split('/')[-2]
-                rating_url = f'https://rating.kinopoisk.ru/{film_id}.xml'
-
-                response = requests.get(rating_url)
-                soup = BeautifulSoup(response.content, 'html.parser')
-                rating = soup.kp_rating.text
-                kinopoisk_url = f"<a href='{kinopoisk_url}'>перейти</a>"
-            except AttributeError:
-                rating = '-'
-                kinopoisk_url = '-'
+            d_kinopoisk = get_ratig_kinopoisk(pars_block)
 
             if url.startswith(sites[KEY_MEGA_FILM]):
                 reply = (
@@ -316,16 +336,16 @@ def get_info_full(url):
                     f"Видео: {video}\n"
                     f"Аудио: {audio}\n"
                     f"Размер: {size}\n"
-                    f"Рейтинг: {rating}\n"
-                    f"Трейлер: {kinopoisk_url}\n\n"
+                    f"Рейтинг: {d_kinopoisk['rating']}\n"
+                    f"Трейлер: {d_kinopoisk['kinopoisk_url']}\n\n"
                     f"{description}\n"
                 )
             else:
                 reply = (
                     f"<b>Сериал</b><a href='{photo}'>.</a>\n"
                     f"<a href='{url}'>{title}</a>\n"
-                    f"Рейтинг: {rating}\n"
-                    f"Трейлер: {kinopoisk_url}\n\n"
+                    f"Рейтинг: {d_kinopoisk['rating']}\n"
+                    f"Трейлер: {d_kinopoisk['kinopoisk_url']}\n\n"
                     f"{description}\n"
                 )
 
@@ -404,7 +424,7 @@ def update_data():
             if new_data:
                 dump_data_json(upd_data)
                 if first_update is True:
-                    time.sleep(3 * 60)
+                    time.sleep(timeout_upd_first)
                     first_update = False
                 else:
                     for url in new_data:
@@ -416,7 +436,7 @@ def update_data():
                             chats = load_chat_json()
                             for chat in chats.keys():
                                 bot.send_message(int(chat), reply, parse_mode='HTML')
-                    time.sleep(20 * 60)
+                    time.sleep(timeout_upd)
         except Exception as error:
             logger.exception(error)
             time.sleep(10)
