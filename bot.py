@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime
 from threading import Thread
 
 import requests
@@ -69,6 +70,12 @@ commands = {  # command description used in the "help" command
     'ping_megashara': 'получить статус сайта megashara',
 }
 
+
+month_str = {
+    0: 'Дек', 1: 'Янв', 2: 'Фев', 3: 'Мар', 4: 'Апр',  5: 'Май', 6: 'Июн',
+    7: 'Июл', 8: 'Авг', 9: 'Сен', 10: 'Окт', 11: 'Ноя', 12: 'Дек'
+}
+
 telebot.logger.setLevel(logging.INFO)
 bot = telebot.TeleBot(TOKEN)
 
@@ -115,7 +122,8 @@ def command_last(message: Message):
         exclude.remove(KEY_NEWSTUDIO)
         reply_wait = 'Придется подождать.. (~1мин.) Получаю информацию о последних релизах Newstudio..'
     else:
-        exclude.remove(KEY_NEWSTUDIO)
+        exclude.remove(KEY_MEGA_FILM)
+        exclude.remove(KEY_MEGA_SERIAL)
         reply_wait = 'Подождите.. Получаю информацию о последних релизах Megashara..'
 
     bot.reply_to(message, reply_wait)
@@ -141,8 +149,12 @@ def command_last(message: Message):
             for k_serial in data[key].keys():
                 count = limit if limit < len(data[key][k_serial]) else len(data[key][k_serial])
                 lst_urls.extend(data[key][k_serial][-count:])
-        reply += get_info_less(lst_urls)
-        reply_full += reply + '\n'
+
+        lst_info = get_info_less(lst_urls)
+        if not lst_info:
+            lst_info = "Там все очень старое, даже выводить не буду.."
+        reply_full += reply + lst_info + '\n'
+
     bot.send_message(message.chat.id, reply_full, parse_mode='HTML')
 
 
@@ -273,17 +285,34 @@ def get_info_less(urls):
                 pars_block = soup.select_one('.accordion-inner')
 
                 title = pars_block.select_one('.post-b').text
+                date_release = pars_block.select_one("a[title='Линк на это сообщение']").text
+                spl_date_release = date_release.split('-')
+                now = datetime.now()
 
-                if "WEBDLRip" not in title:
-                    torrent_dirty = pars_block.select_one('.seedmed')['href']
-                    torrent = 'http://newstudio.tv/' + torrent_dirty
+                is_new_release = False  # need for command /last newstudio release
+                if len(spl_date_release) == 3:
+                    date_release_month = spl_date_release[1]
+                    date_release_year = int(spl_date_release[2].split(' ')[0])
 
-                    if len(urls) == 1:
-                        reply += f"<b> \U0000203C РЕЛИЗ \U0000203C</b>\n"
+                    if now.year == date_release_year or now.month == 1:
+                        if month_str[now.month] == date_release_month or \
+                                month_str[(now.month - 1)] == date_release_month:
+                            is_new_release = True
+                else:
+                    is_new_release = True
 
-                    reply += (
-                        f"{title} <a href='{torrent}'> Торрент \U0001F4E5</a>\n\n"
-                    )
+                if is_new_release:
+                    if "WEBDLRip" not in title:
+                        torrent_dirty = pars_block.select_one('.seedmed')['href']
+                        torrent = 'http://newstudio.tv/' + torrent_dirty
+
+                        if len(urls) == 1:
+                            reply += f"<b> \U0000203C РЕЛИЗ \U0000203C</b>\n"
+
+                        reply += (
+                            f"{title} <a href='{torrent}'> Торрент \U0001F4E5</a>\n\n"
+                        )
+
         except Exception as error:
             logger.exception(error)
 
