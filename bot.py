@@ -17,10 +17,11 @@ from config import TOKEN
 file_json = 'data_url.json'
 chats_json = 'data_chats.json'
 
-apihelper.proxy = {
-    'http': 'socks5://45.63.66.99:1080',
-    'https': 'socks5://45.63.66.99:1080',
-}
+try:
+    import config_proxy
+    apihelper.proxy = config_proxy.PROXY_
+except:
+    apihelper.proxy = None
 
 KEY_MEGA_FILM = 'mega_f'
 KEY_MEGA_SERIAL = 'mega_s'
@@ -95,17 +96,21 @@ def command_help(message: Message):
 @bot.message_handler(commands=['last'])
 def command_last(message: Message):
     unique_code = message.text.split()[1] if len(message.text.split()) > 1 else None
-    exclude = []
+    exclude = [KEY_MEGA_FILM, KEY_MEGA_SERIAL, KEY_NEWSTUDIO]
     if unique_code == CC_ALL:
+        exclude = []
         reply_wait = 'Придется подождать.. (~1мин.) Подписок много.. Ушёл, за информацией..'
+    elif unique_code == CC_MEGA_FILM:
+        exclude.remove(KEY_MEGA_FILM)
+        reply_wait = 'Подождите.. Вспоминаю о последних фильмах Megashara..'
     elif unique_code == CC_MEGA_SERIAL:
-        exclude = [KEY_MEGA_FILM, KEY_NEWSTUDIO]
-        reply_wait = 'Подождите.. Получаю информацию о последних релизах сериалов Megashara..'
+        exclude.remove(KEY_MEGA_SERIAL)
+        reply_wait = 'Подождите.. Посмотрю, что там с сериалами на Megashara..'
     elif unique_code == CC_NEWSTUDIO:
-        exclude = [KEY_MEGA_FILM, KEY_MEGA_SERIAL]
+        exclude.remove(KEY_NEWSTUDIO)
         reply_wait = 'Придется подождать.. (~1мин.) Получаю информацию о последних релизах Newstudio..'
     else:
-        exclude = [KEY_NEWSTUDIO]
+        exclude.remove(KEY_NEWSTUDIO)
         reply_wait = 'Подождите.. Получаю информацию о последних релизах Megashara..'
 
     bot.reply_to(message, reply_wait)
@@ -391,23 +396,27 @@ def listener(messages):
 
 
 def update_data():
+    first_update = True
     while True:
         try:
             upd_data, new_data = load_check_urls_json()
 
             if new_data:
                 dump_data_json(upd_data)
-                for url in new_data:
-                    if url.startswith(sites[KEY_MEGA_SERIAL]):
-                        continue
+                if first_update is True:
+                    time.sleep(3 * 60)
+                    first_update = False
+                else:
+                    for url in new_data:
+                        if url.startswith(sites[KEY_MEGA_SERIAL]):
+                            continue
 
-                    reply = get_info_less(url)
-                    if reply:
-                        chats = load_chat_json()
-                        for chat in chats.keys():
-                            bot.send_message(int(chat), reply, parse_mode='HTML')
-
-            time.sleep(20*60)
+                        reply = get_info_less(url)
+                        if reply:
+                            chats = load_chat_json()
+                            for chat in chats.keys():
+                                bot.send_message(int(chat), reply, parse_mode='HTML')
+                    time.sleep(20 * 60)
         except Exception as error:
             logger.exception(error)
             time.sleep(10)
@@ -426,6 +435,7 @@ class UpdatePars(Thread):
 
 def main():
     bot.set_update_listener(listener)
+    bot.send_message(351443384, 'Я запущен заново')
 
     if not os.path.exists(file_json):
         dump_data_json({})

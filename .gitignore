@@ -3,6 +3,7 @@
 /__pycache__/
 
 /config.py
+/config_proxy.py
 /data_url.json
 /data_chats.json
 
