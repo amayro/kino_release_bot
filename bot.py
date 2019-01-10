@@ -19,31 +19,33 @@ file_json = 'data_url.json'
 chats_json = 'data_chats.json'
 
 try:
-    import config_dev
+    # settings for develop
+    from config_dev import *
 
-    apihelper.proxy = config_dev.proxy
-    timeout_upd_first = config_dev.timeout_upd_first
-    timeout_upd = config_dev.timeout_upd
+    apihelper.proxy = proxy
 except:
+    # settings for production
     apihelper.proxy = None
     timeout_upd_first = 3 * 60
-    timeout_upd = 20 * 60
+    timeout_upd = 2 * 60
 
 KEY_MEGA_FILM = 'mega_f'
 KEY_MEGA_SERIAL = 'mega_s'
 KEY_NEWSTUDIO = 'ns'
 
-sites = {   # sites for parsing
-    KEY_MEGA_FILM: 'http://megashara.com/movies',
-    KEY_MEGA_SERIAL: 'http://megashara.com/tv',
-    KEY_NEWSTUDIO: [
-        'http://newstudio.tv/viewforum.php?f=444&sort=2',    # Миллиарды
-        'http://newstudio.tv/viewforum.php?f=206&sort=2',    # Форс-мажоры
-        'http://newstudio.tv/viewforum.php?f=702&sort=2',    # Ты
-        'http://newstudio.tv/viewforum.php?f=648&sort=2',    # Рассказ служанки
-        'http://newstudio.tv/viewforum.php?f=627&sort=2',    # Иллюзия (обман)
-    ]
-}
+try:
+    # import need NS sites for parsing
+    from config import sites
+except:
+    # some sites for example
+    sites = {   # sites for parsing
+        KEY_MEGA_FILM: 'http://megashara.com/movies',
+        KEY_MEGA_SERIAL: 'http://megashara.com/tv',
+        KEY_NEWSTUDIO: [
+            'http://newstudio.tv/viewforum.php?f=444&sort=2',    # Миллиарды
+            'http://newstudio.tv/viewforum.php?f=206&sort=2',    # Форс-мажоры
+        ]
+    }
 
 # codes for command (CC) last and more
 CC_MEGA_FILM = 'mf'
@@ -219,7 +221,7 @@ def parsing_site(site, count=9):
     return list(reversed(response))
 
 
-def get_ratig_kinopoisk(pars_block):
+def get_rating_kinopoisk(pars_block):
     """
     Find kinopoisk rating on the page and get it
     :param pars_block: bs4.element-html for search
@@ -267,7 +269,7 @@ def get_info_less(urls):
                     photo = pars_block.select_one('.preview img')['src']
                     reply += f"<b>{kind}</b><a href='{photo}'>.</a>\n"
 
-                d_kinopoisk = get_ratig_kinopoisk(pars_block)
+                d_kinopoisk = get_rating_kinopoisk(pars_block)
 
                 url_split = url.split('/')
                 kind_code = CC_MEGA_FILM if url_split[3] == 'movies' else CC_MEGA_SERIAL
@@ -353,7 +355,7 @@ def get_info_full(url):
             desc_clean = re.sub("\n+", '\n', desc_dirty)
             description = desc_clean.strip()
 
-            d_kinopoisk = get_ratig_kinopoisk(pars_block)
+            d_kinopoisk = get_rating_kinopoisk(pars_block)
 
             if url.startswith(sites[KEY_MEGA_FILM]):
                 reply = (
@@ -468,7 +470,7 @@ def update_data():
                     time.sleep(timeout_upd)
         except Exception as error:
             logger.exception(error)
-            time.sleep(10)
+            time.sleep(10 * 60)
 
 
 class UpdatePars(Thread):
