@@ -316,6 +316,7 @@ def get_info_less(urls):
                         )
 
         except Exception as error:
+            logger.info(url)
             logger.exception(error)
 
     return reply
@@ -386,6 +387,7 @@ def get_info_full(url):
             return 'В разработке'
 
     except Exception as error:
+        logger.info(url)
         logger.exception(error)
         return 'Ошибка при получении подробной информации'
 
