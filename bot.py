@@ -13,7 +13,7 @@ from telebot import apihelper
 from telebot import logger
 from telebot.types import Message
 
-from config import TOKEN
+from config import TOKEN, OWNER_ID
 
 file_json = 'data_url.json'
 chats_json = 'data_chats.json'
@@ -162,11 +162,15 @@ def command_last(message: Message):
 
 @bot.message_handler(commands=['ip'])
 def command_ip(message: Message):
-    response = requests.get('https://yandex.ru/internet/', proxies=apihelper.proxy)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    reply = (f"IPv4: {soup.find('span', class_='info__value_type_ipv4').text}\n"
-             f"Регион: {soup.find('span', class_='info__value_type_pinpoint-region').text}\n")
-    bot.send_message(message.chat.id, reply)
+    chat_id = message.chat.id
+    if chat_id == OWNER_ID:
+        response = requests.get('https://yandex.ru/internet/', proxies=apihelper.proxy)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        reply = (f"IPv4: {soup.find('span', class_='info__value_type_ipv4').text}\n"
+                 f"Регион: {soup.find('span', class_='info__value_type_pinpoint-region').text}\n")
+    else:
+        reply = 'У Вас нет прав на данную операцию'
+    bot.send_message(chat_id, reply)
 
 
 @bot.message_handler(commands=['ping_megashara'])
@@ -486,7 +490,7 @@ class UpdatePars(Thread):
 
 def main():
     bot.set_update_listener(listener)
-    bot.send_message(351443384, 'Я запущен заново')
+    bot.send_message(OWNER_ID, 'Я запущен заново')
 
     if not os.path.exists(file_json):
         dump_data_json({})
