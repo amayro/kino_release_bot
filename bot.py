@@ -471,10 +471,10 @@ def update_data():
                             chats = load_chat_json()
                             for chat in chats.keys():
                                 bot.send_message(int(chat), reply, parse_mode='HTML')
-                    time.sleep(timeout_upd)
+            time.sleep(timeout_upd)
         except Exception as error:
             logger.exception(error)
-            time.sleep(10 * 60)
+            time.sleep(8)
 
 
 class UpdatePars(Thread):
@@ -504,7 +504,7 @@ def main():
             bot.polling(none_stop=True, interval=0, timeout=60)
         except Exception as error:
             logger.exception(error)
-            time.sleep(15)
+            time.sleep(5 * 60)
 
 
 if __name__ == '__main__':
