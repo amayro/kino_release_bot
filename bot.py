@@ -2,9 +2,9 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from datetime import datetime
-from threading import Thread
 
 import requests
 import telebot
@@ -477,17 +477,6 @@ def update_data():
             time.sleep(8)
 
 
-class UpdatePars(Thread):
-    """thread for infinite update_parsing"""
-
-    def __init__(self):
-        Thread.__init__(self)
-        self.name = "UpdatePars"
-
-    def run(self):
-        update_data()
-
-
 def main():
     bot.set_update_listener(listener)
     bot.send_message(OWNER_ID, 'Я запущен заново')
@@ -497,7 +486,8 @@ def main():
     if not os.path.exists(chats_json):
         dump_chat_json({})
 
-    UpdatePars().start()
+    thread_update = threading.Thread(name='Update-pars', target=update_data)
+    thread_update.start()
 
     while True:
         try:
