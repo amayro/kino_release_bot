@@ -213,15 +213,18 @@ def parsing_site(site, count=9):
     """parsing site, return list pars_urls"""
     response = requests.get(site, proxies=apihelper.proxy)
     soup = BeautifulSoup(response.content, 'html.parser')
+    try:
+        if 'megashara' in site:
+            response = list(map(lambda x: f"{x.a['href']}",
+                                soup.find('div', id='mid-side').findAll('div', class_='name-block')))[:count]
 
-    if 'megashara' in site:
-        response = list(map(lambda x: f"{x.a['href']}",
-                            soup.find('div', id='mid-side').findAll('div', class_='name-block')))[:count]
+        elif 'newstudio' in site:
+            site_url = 'http://newstudio.tv'
+            response = list(map(lambda x: f"{site_url}{x.a['href'][1:]}",
+                                soup.findAll('div', class_='topic-list')))[:count]
 
-    elif 'newstudio' in site:
-        site_url = 'http://newstudio.tv'
-        response = list(map(lambda x: f"{site_url}{x.a['href'][1:]}",
-                            soup.findAll('div', class_='topic-list')))[:count]
+    except AttributeError:
+        logger.error(f'[URL]: {site} [STATUS CODE: {response.status_code}')
     return list(reversed(response))
 
 
@@ -309,7 +312,16 @@ def get_info_less(urls):
 
                 if is_new_release:
                     if "WEBDLRip" not in title:
-                        torrent_dirty = pars_block.select_one('.seedmed')['href']
+                        torrent_tag = soup.select_one('.seedmed')
+
+                        while not torrent_tag:
+                            logger.error(f"Not found torrent-file")
+                            time.sleep(1 * 60)
+                            response = requests.get(url, proxies=apihelper.proxy)
+                            soup = BeautifulSoup(response.content, 'html.parser')
+                            torrent_tag = soup.select_one('.seedmed')
+
+                        torrent_dirty = torrent_tag.get('href')
                         torrent = 'http://newstudio.tv/' + torrent_dirty
 
                         if len(urls) == 1:
@@ -320,7 +332,7 @@ def get_info_less(urls):
                         )
 
         except Exception as error:
-            logger.exception(f"{error}\n[URL]: {url}")
+            logger.exception(f"{error} [URL]: {url}")
 
     return reply
 
@@ -390,7 +402,7 @@ def get_info_full(url):
             return 'В разработке'
 
     except Exception as error:
-        logger.exception(f"{error}\n[URL]: {url}")
+        logger.exception(f"{error} [URL]: {url}")
         return 'Ошибка при получении подробной информации'
 
 
