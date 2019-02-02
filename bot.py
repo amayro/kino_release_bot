@@ -223,9 +223,14 @@ def parsing_site(site, count=9):
             response = list(map(lambda x: f"{site_url}{x.a['href'][1:]}",
                                 soup.findAll('div', class_='topic-list')))[:count]
 
+        pars_urls = list(reversed(response))
+
     except AttributeError:
-        logger.error(f'[URL]: {site} [STATUS CODE: {response.status_code}')
-    return list(reversed(response))
+        logger.error(f'[URL]: {site} [STATUS CODE]: {response.status_code}')
+        time.sleep(10 * 60)
+        pars_urls = []
+
+    return pars_urls
 
 
 def get_rating_kinopoisk(pars_block):
