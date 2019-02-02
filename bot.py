@@ -143,7 +143,7 @@ def command_last(message: Message):
             reply += '(Newstudio)\n'
 
         limit = 5
-        if type(data[key]) == list:
+        if isinstance(data[key], list):
             count = limit if limit < len(data[key]) else len(data[key])
             lst_urls = data[key][-count:]
         else:
@@ -258,7 +258,7 @@ def get_info_less(urls):
     """get short movie description"""
 
     # convert in list if input url is string
-    if type(urls) == str:
+    if isinstance(urls, str):
         urls = [urls]
 
     reply = ''
@@ -420,7 +420,7 @@ def load_check_urls_json():
         _new_urls = []
         for k_site in sites.keys():
 
-            if type(sites[k_site]) == str:
+            if isinstance(sites[k_site], str):
                 if not data_urls.get(k_site):
                     data_urls[k_site] = []
                 pars_urls = parsing_site(site=sites[k_site])
