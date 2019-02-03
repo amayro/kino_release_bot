@@ -27,7 +27,7 @@ except:
     # settings for production
     apihelper.proxy = None
     timeout_upd_first = 3 * 60
-    timeout_upd = 2 * 60
+    timeout_upd = 5 * 60
 
 KEY_MEGA_FILM = 'mega_f'
 KEY_MEGA_SERIAL = 'mega_s'
@@ -295,46 +295,53 @@ def get_info_less(urls):
             # parsing for newstudio
             elif 'newstudio' in url:
                 response = requests.get(url, proxies=apihelper.proxy)
-                soup = BeautifulSoup(response.content, 'html.parser')
-                pars_block = soup.select_one('.accordion-inner')
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    pars_block = soup.select_one('.accordion-inner')
 
-                title = pars_block.select_one('.post-b').text
-                date_release = pars_block.select_one("a[title='Линк на это сообщение']").text
-                spl_date_release = date_release.split('-')
-                now = datetime.now()
+                    title = pars_block.select_one('.post-b').text
+                    date_release = pars_block.select_one("a[title='Линк на это сообщение']").text
+                    spl_date_release = date_release.split('-')
+                    now = datetime.now()
 
-                is_new_release = False  # need for command /last newstudio release
-                if len(spl_date_release) == 3:
-                    date_release_month = spl_date_release[1]
-                    date_release_year = int(spl_date_release[2].split(' ')[0])
+                    is_new_release = False  # need for command /last newstudio release
+                    if len(spl_date_release) == 3:
+                        date_release_month = spl_date_release[1]
+                        date_release_year = int(spl_date_release[2].split(' ')[0])
 
-                    if now.year == date_release_year or now.month == 1:
-                        if month_str[now.month] == date_release_month or \
-                                month_str[(now.month - 1)] == date_release_month:
-                            is_new_release = True
-                else:
-                    is_new_release = True
+                        if now.year == date_release_year or now.month == 1:
+                            if month_str[now.month] == date_release_month or \
+                                    month_str[(now.month - 1)] == date_release_month:
+                                is_new_release = True
+                    else:
+                        is_new_release = True
 
-                if is_new_release:
-                    if "WEBDLRip" not in title:
-                        torrent_tag = soup.select_one('.seedmed')
+                    if is_new_release:
+                        if "WEBDLRip" not in title:
+                            torrent_tag = soup.select_one('.seedmed') or soup.select_one('.genmed')
 
-                        while not torrent_tag:
-                            logger.error(f"Not found torrent-file")
-                            time.sleep(1 * 60)
-                            response = requests.get(url, proxies=apihelper.proxy)
-                            soup = BeautifulSoup(response.content, 'html.parser')
-                            torrent_tag = soup.select_one('.seedmed')
+                            if not torrent_tag:
+                                for i in range(5):
+                                    logger.error(f"Not found torrent-file url: ", url)
+                                    time.sleep(1 * 60)
+                                    response = requests.get(url, proxies=apihelper.proxy)
+                                    soup = BeautifulSoup(response.content, 'html.parser')
+                                    torrent_tag = soup.select_one('.seedmed')
+                                    if torrent_tag:
+                                        break
 
-                        torrent_dirty = torrent_tag.get('href')
-                        torrent = 'http://newstudio.tv/' + torrent_dirty
+                            if torrent_tag:
+                                torrent_dirty = torrent_tag.get('href')
+                                torrent = 'http://newstudio.tv/' + torrent_dirty
+                            else:
+                                torrent = '-'
 
-                        if len(urls) == 1:
-                            reply += f"<b> \U0000203C РЕЛИЗ \U0000203C</b>\n"
+                            if len(urls) == 1:
+                                reply += f"<b> \U0000203C РЕЛИЗ \U0000203C</b>\n"
 
-                        reply += (
-                            f"{title} <a href='{torrent}'> Торрент \U0001F4E5</a>\n\n"
-                        )
+                            reply += (
+                                f"{title} <a href='{torrent}'> Торрент \U0001F4E5</a>\n\n"
+                            )
 
         except Exception as error:
             logger.exception(f"{error} [URL]: {url}")
@@ -417,31 +424,31 @@ def load_check_urls_json():
     with open(file_json, 'r', encoding='utf-8') as file:
         data_urls = json.load(file)
 
-        _new_urls = []
-        for k_site in sites.keys():
+    _new_urls = []
+    for k_site in sites.keys():
 
-            if isinstance(sites[k_site], str):
-                if not data_urls.get(k_site):
-                    data_urls[k_site] = []
-                pars_urls = parsing_site(site=sites[k_site])
+        if isinstance(sites[k_site], str):
+            if not data_urls.get(k_site):
+                data_urls[k_site] = []
+            pars_urls = parsing_site(site=sites[k_site])
+            for url in pars_urls:
+                if url not in data_urls[k_site]:
+                    _new_urls.append(url)
+                    data_urls[k_site].append(url)
+        else:
+            if not data_urls.get(k_site):
+                data_urls[k_site] = {}
+            for i, url_serial in enumerate(sites[k_site]):
+                k_serial = re.findall(r'\?f=(\d+)', url_serial)[0]
+                if not data_urls[k_site].get(k_serial):
+                    data_urls[k_site][k_serial] = []
+                pars_urls = parsing_site(site=url_serial)
                 for url in pars_urls:
-                    if url not in data_urls[k_site]:
+                    if url not in data_urls[k_site][k_serial]:
                         _new_urls.append(url)
-                        data_urls[k_site].append(url)
-            else:
-                if not data_urls.get(k_site):
-                    data_urls[k_site] = {}
-                for url_serial in sites[k_site]:
-                    k_serial = re.findall(r'\?f=(\d+)', url_serial)[0]
-                    if not data_urls[k_site].get(k_serial):
-                        data_urls[k_site][k_serial] = []
-                    pars_urls = parsing_site(site=url_serial)
-                    for url in pars_urls:
-                        if url not in data_urls[k_site][k_serial]:
-                            _new_urls.append(url)
-                            data_urls[k_site][k_serial].append(url)
+                        data_urls[k_site][k_serial].append(url)
 
-        return data_urls, _new_urls
+    return data_urls, _new_urls
 
 
 def dump_data_json(data_urls):
