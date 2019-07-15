@@ -249,7 +249,7 @@ class KinoRelease:
             reply_wait = 'Подождите.. Получаю информацию о последних релизах Megashara..'
 
         self.bot.reply_to(message, reply_wait)
-        data = self.get_all_and_new_url()[0]
+        data = self.load_json(self.file_data_url)
 
         reply_full = ''
         for key in data:
@@ -305,20 +305,18 @@ class KinoRelease:
         msg_split = message.text.split('_')
         if len(msg_split) == 3:
             self.bot.reply_to(message, 'Получаю информацию о релизе..')
-            data_url = self.get_all_and_new_url()[0]
 
             if msg_split[1] == self.get_site_code("mega_film"):
-                key = KEY_MEGA_FILM
+                url = f'{sites[KEY_MEGA_FILM]}/{msg_split[2]}/'
             elif msg_split[1] == self.get_site_code("mega_serial"):
-                key = KEY_MEGA_SERIAL
+                url = f'{sites[KEY_MEGA_SERIAL]}/{msg_split[2]}/'
             else:
-                key = None
+                url = None
 
-            if key:
-                for url in data_url[key]:
-                    if msg_split[2] in url:
-                        reply = self.get_info_full(url)
-                        return self.bot.send_message(message.chat.id, reply, parse_mode='HTML')
+            if url:
+                reply = self.get_info_full(url)
+                if reply:
+                    return self.bot.send_message(message.chat.id, reply, parse_mode='HTML')
 
                 return self.bot.reply_to(message, 'Релиз не найден')
 
@@ -550,8 +548,11 @@ class KinoRelease:
         response = requests.get(url, proxies=apihelper.proxy)
         soup = BeautifulSoup(response.content, 'html.parser')
         pars_block = soup.select_one('#mid-side')
-        table_2 = pars_block.select_one('.back-bg3 .info-table').extract()
 
+        if response.status_code != 200 or pars_block.select_one('.big-error'):
+            return ''
+
+        table_2 = pars_block.select_one('.back-bg3 .info-table').extract()
         title = pars_block.h1.text
         photo = pars_block.select_one('.preview img')['src']
 
