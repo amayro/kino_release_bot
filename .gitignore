@@ -3,7 +3,9 @@
 /__pycache__/
 
 /config.py
-/config_dev.py
-/data_url.json
-/data_chats.json
+/settings_dev.py
+/data/
+/logs/
 
+/screen_start.sh
+/start.sh
