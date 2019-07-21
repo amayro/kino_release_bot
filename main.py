@@ -12,6 +12,7 @@ import aiohttp
 import requests
 import telebot
 from bs4 import BeautifulSoup
+from requests import ReadTimeout
 from telebot import apihelper
 from telebot.types import Message
 
@@ -295,7 +296,7 @@ class KinoRelease:
     def command_ping_megashara(self, message: Message):
         """Возвращает статус код сайта megashara"""
 
-        response = requests.get('http://megashara.com.', proxies=apihelper.proxy)
+        response = requests.get('http://megashara.com', proxies=apihelper.proxy)
         reply = f"Статус код: {response.status_code}"
         self.bot.send_message(message.chat.id, reply)
 
@@ -325,9 +326,10 @@ class KinoRelease:
     def get_site_urls_for_parsing(self, site: str, count=9):
         """parsing site, return list pars_urls"""
 
-        response = requests.get(site, proxies=apihelper.proxy)
-        soup = BeautifulSoup(response.content, 'html.parser')
+        pars_urls = []
         try:
+            response = requests.get(site, timeout=300, proxies=apihelper.proxy)
+            soup = BeautifulSoup(response.content, 'html.parser')
             if 'megashara' in site:
                 response = list(map(lambda x: f"{x.a['href']}",
                                     soup.find('div', id='mid-side').findAll('div', class_='name-block')))[:count]
@@ -339,10 +341,12 @@ class KinoRelease:
 
             pars_urls = list(reversed(response))
 
+        except ReadTimeout as error:
+            self.logger.error(f'{error}')
+
         except AttributeError:
             self.logger.error(f'[URL]: {site} [STATUS CODE]: {response.status_code}')
             time.sleep(10 * 60)
-            pars_urls = []
 
         return pars_urls
 
