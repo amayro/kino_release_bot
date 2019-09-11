@@ -285,10 +285,10 @@ class KinoRelease:
 
         chat_id = message.chat.id
         if chat_id == OWNER_ID:
-            response = requests.get('https://yandex.ru/internet/', proxies=apihelper.proxy)
-            soup = BeautifulSoup(response.content, 'html.parser')
-            reply = (f"IPv4: {soup.find('span', class_='info__value_type_ipv4').text}\n"
-                     f"Регион: {soup.find('span', class_='info__value_type_pinpoint-region').text}\n")
+            j_response = requests.get('http://ip-api.com/json', proxies=apihelper.proxy).json()
+            reply = (f"IP: {j_response.get('query')}\n"
+                     f"Страна: {j_response.get('country')}\n"
+                     f"Город: {j_response.get('city')}\n")
         else:
             reply = 'У Вас нет прав на данную операцию'
         self.bot.send_message(chat_id, reply)
@@ -706,7 +706,10 @@ class KinoRelease:
                             if reply:
                                 chats = self.load_json(self.file_data_chats)
                                 for chat in chats.keys():
-                                    self.bot.send_message(int(chat), reply, parse_mode='HTML')
+                                    try:
+                                        self.bot.send_message(int(chat), reply, parse_mode='HTML')
+                                    except Exception as error:
+                                        self.logger.info(f'Не могу отправить {int(chat)} {error}')
                     self.dump_json(self.file_data_url, upd_data)
 
                 time.sleep(timeout_upd)
