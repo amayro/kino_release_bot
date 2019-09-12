@@ -8,6 +8,7 @@ import time
 from argparse import ArgumentParser
 from datetime import datetime
 from typing import List, Union
+from kinopoisk.movie import Movie
 
 import aiohttp
 import requests
@@ -59,7 +60,7 @@ class Release:
         self.size = None
         self.torrent = None
         self.rating = None
-        self.kinopoisk_url = None
+        self.trailer_url = None
         self.link_more = None
 
     @staticmethod
@@ -106,13 +107,20 @@ class Release:
             response = requests.get(rating_url)
             soup = BeautifulSoup(response.content, 'html.parser')
             rating = soup.kp_rating.text
-            kinopoisk_url = f"<a href='{kinopoisk_url}'>перейти</a>"
 
         except AttributeError:
             rating = '-'
-            kinopoisk_url = '-'
+            kinopoisk_url = None
 
         return {'rating': rating, 'kinopoisk_url': kinopoisk_url}
+
+    def get_trailer_url_kinopoisk(self, title_en: str):
+        """Получает ссылку на релиз на кинопоиске, если на кинопоиске есть трейлер"""
+
+        movie_list = Movie.objects.search(title_en)
+        movie = movie_list[0]
+        movie.get_content('trailers')
+        return f"https://www.kinopoisk.ru/film/{movie.id}" if bool(movie.trailers) else None
 
     async def async_get_info(self, session) -> str:
         """Асинхронное получение информации о релизе"""
@@ -146,12 +154,12 @@ class Release:
             if 'megashara' in url:
                 parsing_completed = self.parsing_release_megashara(url, html)
                 if parsing_completed:
-                    reply = self.prepare_response_megashara()
+                    reply = self.prepare_response_film()
 
             elif 'lordsfilm' in url:
                 parsing_completed = self.parsing_release_lordsfilm(url, html)
                 if parsing_completed:
-                    reply = self.prepare_response_lordsfilm()
+                    reply = self.prepare_response_film()
 
             elif 'newstudio' in url:
                 parsing_completed = self.parsing_release_newstudio(url, html)
@@ -187,18 +195,20 @@ class Release:
 
         self.genre = self.get_next_element_text(pars_block, 'Жанр:')
         self.country = self.get_next_element_text(pars_block, 'Студия/Страна:')
-        self.translate = self.get_next_element_text(pars_block, 'Перевод:')
-        self.video = self.get_next_element_text(table_2, 'Видео:')
-        self.audio = self.get_next_element_text(table_2, 'Звук:')
-        self.size = self.get_next_element_text(table_2, 'Размер:')
-
-        desc_dirty = pars_block.select_one('.back-bg3').text
-        desc_clean = re.sub("\n+", '\n', desc_dirty)
-        self.description = desc_clean.strip()
 
         d_kinopoisk = self.get_rating_kinopoisk(pars_block)
         self.rating = d_kinopoisk['rating']
-        self.kinopoisk_url = d_kinopoisk['kinopoisk_url']
+        self.trailer_url = d_kinopoisk['kinopoisk_url']
+
+        if not self.is_less_info:
+            self.translate = self.get_next_element_text(pars_block, 'Перевод:')
+            self.video = self.get_next_element_text(table_2, 'Видео:')
+            self.audio = self.get_next_element_text(table_2, 'Звук:')
+            self.size = self.get_next_element_text(table_2, 'Размер:')
+
+            desc_dirty = pars_block.select_one('.back-bg3').text
+            desc_clean = re.sub("\n+", '\n', desc_dirty)
+            self.description = desc_clean.strip()
 
         url_split = url.split('/')
         kind_code = KinoReleaseBot.get_site_code("mega_film") if url_split[3] == 'movies' \
@@ -229,25 +239,31 @@ class Release:
 
         genre_bl = pars_block.find(string='Жанр:')
         country_bl = pars_block.find(string='Страна:')
-        translate_bl = pars_block.find(string='Перевод:')
-        video_bl = pars_block.find(string='Качество:')
 
         self.kind, self.genre = genre_bl.next_element.next_element.text.split(',', 1) if genre_bl else ('Фильм', '-')
         self.kind = self.kind.rstrip('ы')
-
-        self.video = video_bl.next_element.next_element.text if video_bl else '-'
         self.country = country_bl.next_element if country_bl else '-'
-        self.translate = translate_bl.next_element if translate_bl else '-'
-
-        desc_dirty = pars_block.select_one('.fdesc').text
-        desc_clean = re.sub("\n+", '\n', desc_dirty)
-        self.description = desc_clean.strip()
 
         b_kinopoisk = pars_block.select_one('.db-rates .r-kp')
         b_imdb = pars_block.select_one('.db-rates .r-imdb')
         rating_kp = b_kinopoisk.text if b_kinopoisk else '-'
         rating_imdb = b_imdb.text if b_imdb else '-'
         self.rating = f"KP {rating_kp}, IMDB {rating_imdb}"
+
+        if not self.is_less_info:
+            title_en_bl = pars_block.find(string='Название:')
+            translate_bl = pars_block.find(string='Перевод:')
+            video_bl = pars_block.find(string='Качество:')
+
+            title_en = title_en_bl.next_element.next_element.text if title_en_bl else None
+            self.video = video_bl.next_element.next_element.text if video_bl else '-'
+            self.translate = translate_bl.next_element if translate_bl else '-'
+
+            desc_dirty = pars_block.select_one('.fdesc').text
+            desc_clean = re.sub("\n+", '\n', desc_dirty)
+            self.description = desc_clean.strip()
+
+            self.trailer_url = self.get_trailer_url_kinopoisk(title_en)
 
         kind_code = KinoReleaseBot.get_site_code("lord_film")
         self.link_more = f'{KinoReleaseBot.get_command_code("more_film")}_{kind_code}_{url_split[1].split("-")[0]}'
@@ -308,6 +324,16 @@ class Release:
         else:
             return False
 
+    def prepare_response_film(self) -> str:
+        """Подготавливает ответ с информацией о фильме"""
+
+        if self.is_less_info:
+            reply = self.prepare_response_film_less()
+        else:
+            reply = self.prepare_response_film_full()
+
+        return reply
+
     def prepare_response_film_less(self) -> str:
         """Подготавливает сокращенное инфо для фильмов"""
 
@@ -325,45 +351,26 @@ class Release:
         )
         return reply
 
-    def prepare_response_megashara(self) -> str:
-        """Подготавливает ответ для релиза с megashara"""
+    def prepare_response_film_full(self) -> str:
+        """Подготавливает развернутое инфо для фильмов"""
 
-        if self.is_less_info:
-            reply = self.prepare_response_film_less()
-        else:
-            reply = (
-                f"<b>{self.kind}</b><a href='{self.photo}'>.</a>\n"
-                f"<a href='{self.url}'>{self.title}</a>\n"
-                f"Жанр: {self.genre}\n"
-                f"Студия/Страна: {self.country}\n"
-                f"Перевод: {self.translate}\n"
-                f"Видео: {self.video}\n"
-                f"Аудио: {self.audio}\n"
-                f"Размер: {self.size}\n"
-                f"Рейтинг: {self.rating}\n"
-                f"Трейлер: {self.kinopoisk_url}\n\n"
-                f"{self.description}\n"
-            )
+        audio = f"Аудио: {self.audio}\n" if self.audio else ''
+        size = f"Размер: {self.size}\n" if self.size else ''
+        trailer = f"<a href='{self.trailer_url}'>перейти</a>" if self.trailer_url else '-'
 
-        return reply
-
-    def prepare_response_lordsfilm(self) -> str:
-        """Подготавливает ответ для релиза с lordsfilm"""
-
-        if self.is_less_info:
-            reply = self.prepare_response_film_less()
-        else:
-            reply = (
-                f"<b>{self.kind}</b><a href='{self.photo}'>.</a>\n"
-                f"<a href='{self.url}'>{self.title}</a>\n"
-                f"Жанр: {self.genre}\n"
-                f"Страна: {self.country}\n"
-                f"Перевод: {self.translate}\n"
-                f"Видео: {self.video}\n"
-                f"Рейтинг: {self.rating}\n\n"
-                f"{self.description}\n"
-            )
-
+        reply = (
+            f"<b>{self.kind}</b><a href='{self.photo}'>.</a>\n"
+            f"<a href='{self.url}'>{self.title}</a>\n"
+            f"Жанр: {self.genre}\n"
+            f"Страна: {self.country}\n"
+            f"Перевод: {self.translate}\n"
+            f"Видео: {self.video}\n"
+            f"{audio}"
+            f"{size}"
+            f"Рейтинг: {self.rating}\n"
+            f"Трейлер: {trailer}\n\n"
+            f"{self.description}\n"
+        )
         return reply
 
     def prepare_response_newstudio(self) -> str:

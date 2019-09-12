@@ -11,6 +11,7 @@ pysocks = "==1.6.8"
 requests = "==2.20.0"
 pyTelegramBotAPI = "==3.6.6"
 aiohttp = "==3.5.4"
+kinopoiskpy = "*"
 
 [requires]
 python_version = "3.7"
