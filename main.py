@@ -1,12 +1,13 @@
 import asyncio
 import json
+import logging
 import os
 import re
 import threading
 import time
 from argparse import ArgumentParser
 from datetime import datetime
-from typing import List, Union, Callable
+from typing import List, Union
 
 import aiohttp
 import requests
@@ -23,7 +24,7 @@ from settings import (
     proxy,
     timeout_upd_first,
     timeout_upd,
-    KEY_MEGA_FILM, KEY_MEGA_SERIAL, KEY_NEWSTUDIO,
+    KEY_MEGA_FILM, KEY_MEGA_SERIAL, KEY_NEWSTUDIO, KEY_LORD_FILM,
     sites,
 )
 
@@ -33,78 +34,33 @@ except ModuleNotFoundError:
     pass
 
 
-class KinoRelease:
-    bot = telebot.TeleBot(TOKEN)
-    apihelper.proxy = proxy
+class Release:
+    exclude_genre = ['ТВ-Шоу', 'Мультфильм', 'Документальный', 'Anime', 'Спорт', 'КВН']
+    access_country = ['США', 'Россия', 'Германия', 'Великобритания', 'Испания', 'Франция']
 
-    def __init__(self, debug, logs_show):
-        self.logger = get_logger(is_debug=debug, show_logs=logs_show)
+    def __init__(self, url, is_single_request=True, is_less_info=True):
+        self.logger = logging.getLogger('main')
+        self.is_single_request = is_single_request
+        self.is_less_info = is_less_info
 
-        self.data_dir = 'data'
-        self._init_need_dirs(dirs=[self.data_dir])
+        self.url = url
 
-        self.file_data_url = None
-        self.file_data_chats = None
-        self._init_need_files()
+        self.title = None
+        self.kind = None
+        self.photo = None
 
-    @staticmethod
-    def _init_need_dirs(dirs: List):
-        """Создает необходимые для работы директории"""
+        self.genre = None
+        self.country = None
+        self.video = None
+        self.audio = None
+        self.description = None
+        self.translate = None
 
-        [os.mkdir(dir_) for dir_ in dirs if not os.path.exists(dir_)]
-
-    def _init_need_files(self):
-        """Создает файлы c начальными данными"""
-
-        self.file_data_url = os.path.join(self.data_dir, 'data_url.json')
-        self.file_data_chats = os.path.join(self.data_dir, 'data_chats.json')
-
-        init_files_data = [
-            (self.file_data_url, {}),
-            (self.file_data_chats, {}),
-        ]
-        [self.dump_json(file, data) for file, data in init_files_data if not os.path.exists(file)]
-
-    @staticmethod
-    def dump_json(filename, data):
-        """Записывает данные в json файл"""
-
-        with open(filename, "w", encoding=ENCODING_NAME) as file:
-            file.write(json.dumps(data, indent=4, ensure_ascii=False))
-
-    @staticmethod
-    def load_json(filename):
-        """Считывает данные из json файла"""
-
-        with open(filename, 'r', encoding=ENCODING_NAME) as file:
-            data = json.load(file)
-        return data
-
-    @staticmethod
-    def get_command_code(command: str):
-        """Возвращает код команды"""
-
-        codes = {
-            'start': '/start',
-            'help': '/help',
-            'last': '/last',
-            'ip': '/ip',
-            'ping_megashara': '/ping_megashara',
-            'more_film': '/more',
-        }
-        return codes.get(command)
-
-    @staticmethod
-    def get_site_code(site: str):
-        """Возвращает код (аббревиатуру) сайта"""
-
-        codes = {
-            'all': 'all',
-            'mega_film': 'mf',
-            'mega_serial': 'ms',
-            'newstudio': 'ns',
-        }
-        return codes.get(site)
+        self.size = None
+        self.torrent = None
+        self.rating = None
+        self.kinopoisk_url = None
+        self.link_more = None
 
     @staticmethod
     def get_month_str(num: int):
@@ -115,19 +71,6 @@ class KinoRelease:
             7: 'Июл', 8: 'Авг', 9: 'Сен', 10: 'Окт', 11: 'Ноя', 12: 'Дек'
         }
         return month_str.get(num)
-
-    @staticmethod
-    def get_telegram_name(message: Message):
-        """Возвращает username в телеграме или, если нету, тогда имя"""
-
-        if message.from_user.username:
-            return f'@{message.from_user.username}'
-
-        first_name = message.from_user.first_name
-        last_name = message.from_user.last_name
-        if first_name and last_name:
-            return f'{first_name} {last_name}'
-        return first_name or last_name
 
     @staticmethod
     def get_next_element_text(pars_block, title_parent_bl: str) -> str:
@@ -171,20 +114,378 @@ class KinoRelease:
 
         return {'rating': rating, 'kinopoisk_url': kinopoisk_url}
 
+    async def async_get_info(self, session) -> str:
+        """Асинхронное получение информации о релизе"""
+
+        self.logger.debug(f'Starting {self.url}')
+
+        async with session.get(self.url, proxy=proxy) as response:
+            self.logger.debug(f'response.status {response.status} {self.url}')
+            text = await response.text()
+
+            if response.status != 200:
+                return ''
+
+            return self.parsing_and_prepare(self.url, text)
+
+    def get_info(self) -> str:
+        """Получение информации о релизе"""
+
+        self.logger.debug(f'Starting {self.url}')
+        response = requests.get(self.url, proxies=apihelper.proxy)
+
+        if response.status_code != 200:
+            return ''
+
+        return self.parsing_and_prepare(self.url, response.content)
+
+    def parsing_and_prepare(self, url, html: str):
+
+        reply = ''
+        try:
+            if 'megashara' in url:
+                parsing_completed = self.parsing_release_megashara(url, html)
+                if parsing_completed:
+                    reply = self.prepare_response_megashara()
+
+            elif 'lordsfilm' in url:
+                parsing_completed = self.parsing_release_lordsfilm(url, html)
+                if parsing_completed:
+                    reply = self.prepare_response_lordsfilm()
+
+            elif 'newstudio' in url:
+                parsing_completed = self.parsing_release_newstudio(url, html)
+                if parsing_completed:
+                    reply = self.prepare_response_newstudio()
+
+        except Exception as error:
+            self.logger.exception(f"{error} [URL]: {url}")
+            reply = ''
+
+        return reply
+
+    def parsing_release_megashara(self, url, html: str) -> bool:
+        """
+        Парсит url Megashara
+
+        **Args**:
+
+         ``url``: url, который подлежит парсингу
+
+         ``html``: страница с контентом
+        """
+
+        soup = BeautifulSoup(html, 'html.parser')
+        pars_block = soup.select_one('#mid-side')
+
+        if pars_block.select_one('.big-error') or not pars_block:
+            return False
+
+        table_2 = pars_block.select_one('.back-bg3 .info-table').extract()
+        self.title = pars_block.h1.text
+        self.photo = pars_block.select_one('.preview img')['src']
+
+        self.genre = self.get_next_element_text(pars_block, 'Жанр:')
+        self.country = self.get_next_element_text(pars_block, 'Студия/Страна:')
+        self.translate = self.get_next_element_text(pars_block, 'Перевод:')
+        self.video = self.get_next_element_text(table_2, 'Видео:')
+        self.audio = self.get_next_element_text(table_2, 'Звук:')
+        self.size = self.get_next_element_text(table_2, 'Размер:')
+
+        desc_dirty = pars_block.select_one('.back-bg3').text
+        desc_clean = re.sub("\n+", '\n', desc_dirty)
+        self.description = desc_clean.strip()
+
+        d_kinopoisk = self.get_rating_kinopoisk(pars_block)
+        self.rating = d_kinopoisk['rating']
+        self.kinopoisk_url = d_kinopoisk['kinopoisk_url']
+
+        url_split = url.split('/')
+        kind_code = KinoReleaseBot.get_site_code("mega_film") if url_split[3] == 'movies' \
+            else KinoReleaseBot.get_site_code("mega_serial")
+        self.link_more = f'{KinoReleaseBot.get_command_code("more_film")}_{kind_code}_{url_split[4]}'
+
+        return True
+
+    def parsing_release_lordsfilm(self, url, html: str) -> bool:
+        """
+        Парсит url Lordsfilm
+
+        **Args**:
+
+         ``url``: url, который подлежит парсингу
+
+         ``html``: страница с контентом
+        """
+        soup = BeautifulSoup(html, 'html.parser')
+
+        if not soup.select_one('.fmain'):
+            return False
+
+        url_split = url.rsplit('/', 1)
+        pars_block = soup.select_one('.fcols')
+        self.title = pars_block.div.h1.text.strip('смотреть онлайн')
+        self.photo = f"{url_split[0]}{pars_block.select_one('.fposter img')['src']}"
+
+        genre_bl = pars_block.find(string='Жанр:')
+        country_bl = pars_block.find(string='Страна:')
+        translate_bl = pars_block.find(string='Перевод:')
+        video_bl = pars_block.find(string='Качество:')
+
+        self.kind, self.genre = genre_bl.next_element.next_element.text.split(',', 1) if genre_bl else ('Фильм', '-')
+        self.kind = self.kind.rstrip('ы')
+
+        self.video = video_bl.next_element.next_element.text if video_bl else '-'
+        self.country = country_bl.next_element if country_bl else '-'
+        self.translate = translate_bl.next_element if translate_bl else '-'
+
+        desc_dirty = pars_block.select_one('.fdesc').text
+        desc_clean = re.sub("\n+", '\n', desc_dirty)
+        self.description = desc_clean.strip()
+
+        b_kinopoisk = pars_block.select_one('.db-rates .r-kp')
+        b_imdb = pars_block.select_one('.db-rates .r-imdb')
+        rating_kp = b_kinopoisk.text if b_kinopoisk else '-'
+        rating_imdb = b_imdb.text if b_imdb else '-'
+        self.rating = f"KP {rating_kp}, IMDB {rating_imdb}"
+
+        kind_code = KinoReleaseBot.get_site_code("lord_film")
+        self.link_more = f'{KinoReleaseBot.get_command_code("more_film")}_{kind_code}_{url_split[1].split("-")[0]}'
+
+        return True
+
+    def parsing_release_newstudio(self, url, html: str) -> bool:
+        """
+        Парсит url Newstudio
+
+        **Args**:
+
+         ``url``: url, который подлежит парсингу
+
+         ``html``: страница с контентом
+        """
+        soup = BeautifulSoup(html, 'html.parser')
+        pars_block = soup.select_one('.accordion-inner')
+
+        self.title = pars_block.select_one('.post-b').text
+        date_release = pars_block.select_one("a[title='Линк на это сообщение']").text
+        spl_date_release = date_release.split('-')
+        now = datetime.now()
+
+        is_new_release = False  # need for command /last newstudio release
+        if len(spl_date_release) == 3:
+            date_release_month = spl_date_release[1]
+            date_release_year = int(spl_date_release[2].split(' ')[0])
+
+            if now.year == date_release_year or now.month == 1:
+                if self.get_month_str(now.month) == date_release_month or \
+                        self.get_month_str(now.month - 1) == date_release_month:
+                    is_new_release = True
+        else:
+            is_new_release = True
+
+        if is_new_release:
+            torrent_tag = soup.select_one('.seedmed') or soup.select_one('.genmed')
+
+            if not torrent_tag:
+                for _ in range(5):
+                    self.logger.error(f"Not found torrent-file url: ", url)
+                    time.sleep(1 * 60)
+                    response = requests.get(url, proxies=apihelper.proxy)
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    torrent_tag = soup.select_one('.seedmed')
+                    if torrent_tag:
+                        break
+
+            if torrent_tag:
+                torrent_dirty = torrent_tag.get('href')
+                self.torrent = 'http://newstudio.tv/' + torrent_dirty
+            else:
+                self.torrent = '-'
+
+            return True
+
+        else:
+            return False
+
+    def prepare_response_film_less(self) -> str:
+        """Подготавливает сокращенное инфо для фильмов"""
+
+        if self.is_single_request and (any(exc_g in self.genre for exc_g in self.exclude_genre)
+                                       or not any(acc_c in self.country for acc_c in self.access_country)):
+            return ''
+
+        kind = f"<b>{self.kind}</b><a href='{self.photo}'>.</a>\n" if self.is_single_request else ""
+        title = f"<a href='{self.url}'>{self.title}</a>" if self.is_single_request else f"{self.title}"
+
+        reply = (
+            f"{kind}"
+            f"{title}\n"
+            f"Рейтинг: {self.rating} ({self.link_more})\n\n"
+        )
+        return reply
+
+    def prepare_response_megashara(self) -> str:
+        """Подготавливает ответ для релиза с megashara"""
+
+        if self.is_less_info:
+            reply = self.prepare_response_film_less()
+        else:
+            reply = (
+                f"<b>{self.kind}</b><a href='{self.photo}'>.</a>\n"
+                f"<a href='{self.url}'>{self.title}</a>\n"
+                f"Жанр: {self.genre}\n"
+                f"Студия/Страна: {self.country}\n"
+                f"Перевод: {self.translate}\n"
+                f"Видео: {self.video}\n"
+                f"Аудио: {self.audio}\n"
+                f"Размер: {self.size}\n"
+                f"Рейтинг: {self.rating}\n"
+                f"Трейлер: {self.kinopoisk_url}\n\n"
+                f"{self.description}\n"
+            )
+
+        return reply
+
+    def prepare_response_lordsfilm(self) -> str:
+        """Подготавливает ответ для релиза с lordsfilm"""
+
+        if self.is_less_info:
+            reply = self.prepare_response_film_less()
+        else:
+            reply = (
+                f"<b>{self.kind}</b><a href='{self.photo}'>.</a>\n"
+                f"<a href='{self.url}'>{self.title}</a>\n"
+                f"Жанр: {self.genre}\n"
+                f"Страна: {self.country}\n"
+                f"Перевод: {self.translate}\n"
+                f"Видео: {self.video}\n"
+                f"Рейтинг: {self.rating}\n\n"
+                f"{self.description}\n"
+            )
+
+        return reply
+
+    def prepare_response_newstudio(self) -> str:
+        """Подготавливает ответ для релиза с newstudio"""
+
+        reply = ''
+
+        if "WEBDLRip" in self.title:
+            return reply
+
+        if self.is_single_request:
+            reply = f"<b> \U0000203C РЕЛИЗ \U0000203C</b>\n"
+
+        reply += (
+            f"{self.title} <a href='{self.torrent}'> Торрент \U0001F4E5</a>\n\n"
+        )
+        return reply
+
+
+class KinoReleaseBot:
+    bot = telebot.TeleBot(TOKEN)
+    apihelper.proxy = proxy
+
+    def __init__(self, debug, logs_show):
+        self.logger = get_logger(is_debug=debug, show_logs=logs_show)
+
+        self.data_dir = 'data'
+        self._init_need_dirs(dirs=[self.data_dir])
+
+        self.file_data_url = None
+        self.file_data_chats = None
+        self._init_need_files()
+
+        self.data_urls = self.load_json(self.file_data_url)
+        self.data_chats = self.load_json(self.file_data_chats)
+
+    @staticmethod
+    def _init_need_dirs(dirs: List):
+        """Создает необходимые для работы директории"""
+
+        [os.mkdir(dir_) for dir_ in dirs if not os.path.exists(dir_)]
+
+    def _init_need_files(self):
+        """Создает файлы c начальными данными"""
+
+        self.file_data_url = os.path.join(self.data_dir, 'data_url.json')
+        self.file_data_chats = os.path.join(self.data_dir, 'data_chats.json')
+
+        init_files_data = [
+            (self.file_data_url, {}),
+            (self.file_data_chats, {}),
+        ]
+        [self.dump_json(file, data) for file, data in init_files_data if not os.path.exists(file)]
+
+    @staticmethod
+    def dump_json(filename, data):
+        """Записывает данные в json файл"""
+
+        with open(filename, "w", encoding=ENCODING_NAME) as file:
+            file.write(json.dumps(data, indent=4, ensure_ascii=False))
+
+    @staticmethod
+    def load_json(filename):
+        """Считывает данные из json файла"""
+
+        with open(filename, 'r', encoding=ENCODING_NAME) as file:
+            data = json.load(file)
+        return data
+
+    @staticmethod
+    def get_command_code(command: str):
+        """Возвращает код команды"""
+
+        codes = {
+            'start': '/start',
+            'help': '/help',
+            'last': '/last',
+            'ip': '/ip',
+            'ping_site': '/ping',
+            'more_film': '/more',
+        }
+        return codes.get(command)
+
+    @staticmethod
+    def get_site_code(site: str):
+        """Возвращает код (аббревиатуру) сайта"""
+
+        codes = {
+            'all': 'all',
+            'lord_film': 'lf',
+            'mega_film': 'mf',
+            'mega_serial': 'ms',
+            'newstudio': 'ns',
+        }
+        return codes.get(site)
+
+    @staticmethod
+    def get_telegram_name(message: Message):
+        """Возвращает username в телеграме или, если нету, тогда имя"""
+
+        if message.from_user.username:
+            return f'@{message.from_user.username}'
+
+        first_name = message.from_user.first_name
+        last_name = message.from_user.last_name
+        if first_name and last_name:
+            return f'{first_name} {last_name}'
+        return first_name or last_name
+
     def command_start(self, message: Message):
         """Приветствие / Добавление нового пользователя"""
 
         chat_id = message.chat.id
         first_name = message.from_user.first_name
-        data_chats = self.load_json(self.file_data_chats)
 
-        if str(chat_id) in data_chats.keys():
+        if str(chat_id) in self.data_chats.keys():
             reply = f"Привет, {first_name}"
 
         else:
             self.bot.send_message(OWNER_ID, f'Мне написал start {self.get_telegram_name(message)}')
-            data_chats[chat_id] = message.chat.username
-            self.dump_json(self.file_data_chats, data_chats)
+            self.data_chats[chat_id] = message.chat.username
+            self.dump_json(self.file_data_chats, self.data_chats)
             reply = f"Добро пожаловать, {first_name}"
 
         self.bot.reply_to(message, reply)
@@ -200,21 +501,23 @@ class KinoRelease:
             f'{self.get_command_code("help")}': 'показать доступные команды',
 
             f'{self.get_command_code("last")} X': 'показать последние релизы, где\nX - опционально:\n'
+            f'{indent}{self.get_site_code("lord_film")} - последние релизы фильмов Lordsfilms\n'
             f'{indent}{self.get_site_code("mega_film")} - последние релизы фильмов Megashara\n'
             f'{indent}{self.get_site_code("mega_serial")} - последние релизы сериалов Megashara\n'
             f'{indent}{self.get_site_code("newstudio")} - последние релизы из подписки сериалов Newstudio\n'
             f'{indent}{self.get_site_code("all")} - все релизы в подписке\n'
-            f'(если X не указано, то выведет {self.get_site_code("mega_film")}+{self.get_site_code("mega_serial")})\n',
+            f'(если X не указано, то выведет {self.get_site_code("lord_film")})\n',
 
             f'{self.get_command_code("more_film")}_X_Y': 'показать полную информацию о фильме или сериале, где\n'
-            'X - код сайта:\n'
+                                                         'X - код сайта:\n'
             f'{indent}{self.get_site_code("mega_film")} - megashara фильм,\n'
             f'{indent}{self.get_site_code("mega_serial")} - megashara сериал,\n'
-            'Y - id релиза ',
+                                                         'Y - id релиза ',
 
             f'{self.get_command_code("ip")}': 'показать ip и регион бота',
 
-            f'{self.get_command_code("ping_megashara")}': 'получить статус сайта megashara',
+            f'{self.get_command_code("ping_site")} X': 'получить статус сайта, где X - код сайта аналогично команде '
+            f'(если X не указано, то выведет для {self.get_site_code("lord_film")})\n',
         }
 
         for key in commands:
@@ -226,7 +529,7 @@ class KinoRelease:
         """Выводит данные о последних релизах с указанных сайтов"""
 
         unique_code = message.text.split()[1] if len(message.text.split()) > 1 else None
-        exclude = [KEY_MEGA_FILM, KEY_MEGA_SERIAL, KEY_NEWSTUDIO]
+        exclude = [KEY_MEGA_FILM, KEY_MEGA_SERIAL, KEY_NEWSTUDIO, KEY_LORD_FILM]
 
         if unique_code == self.get_site_code("all"):
             exclude = []
@@ -244,24 +547,29 @@ class KinoRelease:
             exclude.remove(KEY_NEWSTUDIO)
             reply_wait = 'Придется подождать.. (~1мин.) Получаю информацию о последних релизах Newstudio..'
 
+        elif unique_code == self.get_site_code("lord_film"):
+            exclude.remove(KEY_LORD_FILM)
+            reply_wait = 'Придется подождать.. Получаю информацию о последних релизах Lordsfilm..'
+
         else:
-            exclude.remove(KEY_MEGA_FILM)
-            exclude.remove(KEY_MEGA_SERIAL)
-            reply_wait = 'Подождите.. Получаю информацию о последних релизах Megashara..'
+            exclude.remove(KEY_LORD_FILM)
+            reply_wait = 'Подождите.. Получаю информацию о последних релизах Lordsfilm..'
 
         self.bot.reply_to(message, reply_wait)
-        data = self.load_json(self.file_data_url)
+        data = self.data_urls
 
         reply_full = ''
         for key in data:
             if key in exclude:
                 continue
-            reply = '<b>Фильмы: </b>' if key == KEY_MEGA_FILM else '<b>Сериалы: </b>'
+            reply = '<b>Фильмы: </b>' if key in [KEY_MEGA_FILM, KEY_LORD_FILM] else '<b>Сериалы: </b>'
 
             if key in [KEY_MEGA_FILM, KEY_MEGA_SERIAL]:
                 reply += '(Megashara)\n'
             elif key == KEY_NEWSTUDIO:
                 reply += '(Newstudio)\n'
+            elif key == KEY_LORD_FILM:
+                reply += '(Lordsfilms)\n'
 
             limit = 5
             if isinstance(data[key], list):
@@ -275,8 +583,11 @@ class KinoRelease:
 
             lst_info = self.get_info_less(lst_urls)
             if not lst_info:
-                lst_info = "Там все очень старое, даже выводить не буду.."
+                lst_info = "Там все очень старое, даже выводить не буду..\n"
             reply_full += reply + lst_info + '\n'
+
+        if not reply_full:
+            reply_full = 'Релизов не найдено'
 
         self.bot.send_message(message.chat.id, reply_full, parse_mode='HTML')
 
@@ -293,12 +604,33 @@ class KinoRelease:
             reply = 'У Вас нет прав на данную операцию'
         self.bot.send_message(chat_id, reply)
 
-    def command_ping_megashara(self, message: Message):
-        """Возвращает статус код сайта megashara"""
+    def command_ping_site(self, message: Message):
+        """Возвращает статус код сайта"""
 
-        response = requests.get('http://megashara.com', proxies=apihelper.proxy)
-        reply = f"Статус код: {response.status_code}"
-        self.bot.send_message(message.chat.id, reply)
+        unique_code = message.text.split()[1] if len(message.text.split()) > 1 else None
+
+        if unique_code == self.get_site_code("mega_film") or unique_code == self.get_site_code("mega_serial"):
+            url = 'http://megashara.com'
+
+        elif unique_code == self.get_site_code("lord_film"):
+            url = 'http://lordsfilms.tv'
+
+        elif unique_code == self.get_site_code("newstudio"):
+            url = 'http://newstudio.tv'
+
+        elif unique_code is None:
+            url = 'http://lordsfilms.tv'
+
+        else:
+            url = None
+
+        if url:
+            response = requests.get(url, proxies=apihelper.proxy)
+            reply = f"Статус код: {response.status_code} {url}"
+            self.bot.send_message(message.chat.id, reply)
+
+        else:
+            self.bot.reply_to(message, f'Хм.. может {self.get_command_code("help")}?')
 
     def command_more_film(self, message: Message):
         """Возвращает подробную информацию о фильме или сериале"""
@@ -309,8 +641,19 @@ class KinoRelease:
 
             if msg_split[1] == self.get_site_code("mega_film"):
                 url = f'{sites[KEY_MEGA_FILM]}/{msg_split[2]}/'
+
             elif msg_split[1] == self.get_site_code("mega_serial"):
                 url = f'{sites[KEY_MEGA_SERIAL]}/{msg_split[2]}/'
+
+            elif msg_split[1] == self.get_site_code("lord_film"):
+                lord_urls_data = self.data_urls.get(KEY_LORD_FILM)
+                for u in lord_urls_data:
+                    if f'/{msg_split[2]}-' in u:
+                        url = u
+                        break
+                else:
+                    url = None
+
             else:
                 url = None
 
@@ -330,14 +673,26 @@ class KinoRelease:
         try:
             response = requests.get(site, timeout=300, proxies=apihelper.proxy)
             soup = BeautifulSoup(response.content, 'html.parser')
+
+            if response.status_code != 200:
+                self.logger.info(f'[STATUS CODE]: {response.status_code} [URL]: {site}')
+
             if 'megashara' in site:
+                pars_bl = soup.find('div', id='mid-side')
+                if not pars_bl:
+                    return pars_urls
+
                 response = list(map(lambda x: f"{x.a['href']}",
-                                    soup.find('div', id='mid-side').findAll('div', class_='name-block')))[:count]
+                                    pars_bl.findAll('div', class_='name-block')))[:count]
 
             elif 'newstudio' in site:
                 site_url = 'http://newstudio.tv'
                 response = list(map(lambda x: f"{site_url}{x.a['href'][1:]}",
                                     soup.findAll('div', class_='topic-list')))[:count]
+
+            elif 'lordsfilm' in site:
+                response = list(map(lambda x: f"{x.a['href']}",
+                                    soup.find('div', id='dle-content').findAll('div', class_='short')))[:count]
 
             pars_urls = list(reversed(response))
 
@@ -345,21 +700,18 @@ class KinoRelease:
             self.logger.error(f'{error}')
 
         except AttributeError:
-            self.logger.error(f'[URL]: {site} [STATUS CODE]: {response.status_code}')
+            self.logger.error(f'[URL]: {site}')
             time.sleep(10 * 60)
 
         return pars_urls
 
     @staticmethod
-    async def async_parsing_url(parsing_handler: Callable,
-                                urls: List[str],
+    async def async_parsing_url(urls: List[str],
                                 is_single_request: bool) -> str:
         """
         Асинхронный парсинг url
 
         **Args**:
-
-         ``parsing_handler``: функция-обработчик, парсящая url
 
          ``urls``: url, подлежащие парсингу
 
@@ -373,7 +725,7 @@ class KinoRelease:
 
         async with aiohttp.ClientSession() as session:
             for i, url in enumerate(urls):
-                task = asyncio.ensure_future(parsing_handler(session, url, is_single_request))
+                task = asyncio.ensure_future(Release(url, is_single_request).async_get_info(session))
                 tasks.append(task)
                 await asyncio.sleep(0.2 if i % 5 != 0 else 1)
             result = await asyncio.gather(*tasks)
@@ -395,17 +747,19 @@ class KinoRelease:
 
         is_single_request = len(urls) == 1
         urls_megashara = [url for url in urls if 'megashara' in url]
+        urls_lordsfilm = [url for url in urls if 'lordsfilm' in url]
         urls_newstudio = [url for url in urls if 'newstudio' in url]
 
         loop = asyncio.new_event_loop()
 
         tasks = [
-            loop.create_task(self.async_parsing_url(parsing_handler=self.get_info_less_megashara,
-                                                    urls=urls_megashara,
+            loop.create_task(self.async_parsing_url(urls=urls_megashara,
                                                     is_single_request=is_single_request)),
 
-            loop.create_task(self.async_parsing_url(parsing_handler=self.get_info_less_newstudio,
-                                                    urls=urls_newstudio,
+            loop.create_task(self.async_parsing_url(urls=urls_lordsfilm,
+                                                    is_single_request=is_single_request)),
+
+            loop.create_task(self.async_parsing_url(urls=urls_newstudio,
                                                     is_single_request=is_single_request)),
         ]
 
@@ -417,204 +771,24 @@ class KinoRelease:
             reply += d.result() if d.result() else ''
         return reply
 
-    async def get_info_less_megashara(self, session, url: str, is_single_request: bool) -> str:
-        """
-        Парсит url Megashara
-
-        **Args**:
-
-         ``url``: url, который подлежит парсингу
-
-         ``is_single_request``: является ли запрос на получение одиночным или входит в состав для парсинга
-        """
-
-        reply = ''
-        try:
-            self.logger.debug(f'Starting {url}')
-            async with session.get(url, proxy=proxy) as response:
-                text = await response.text()
-                self.logger.debug(f'response.status {response.status} {url}')
-
-                if response.status != 200:
-                    return ''
-
-                soup = BeautifulSoup(text, 'html.parser')
-
-                pars_block = soup.select_one('#mid-side')
-                title = pars_block.h1.text
-
-                if is_single_request:
-                    genre = self.get_next_element_text(pars_block, 'Жанр:')
-                    exclude_genre = ['ТВ-Шоу', 'Мультфильм', 'Документальный', 'Anime', 'Спорт', 'КВН']
-
-                    if any((exc_g in genre for exc_g in exclude_genre)):
-                        return ''
-
-                    kind = 'Фильм' if url.startswith(sites[KEY_MEGA_FILM]) else 'Сериал'
-                    photo = pars_block.select_one('.preview img')['src']
-                    reply += f"<b>{kind}</b><a href='{photo}'>.</a>\n"
-
-                d_kinopoisk = self.get_rating_kinopoisk(pars_block)
-
-                url_split = url.split('/')
-                kind_code = self.get_site_code("mega_film") if url_split[3] == 'movies' \
-                    else self.get_site_code("mega_serial")
-                link_more = f'{self.get_command_code("more_film")}_{kind_code}_{url_split[4]}'
-
-                reply += (
-                    f"{title}\n"
-                    f"Рейтинг: {d_kinopoisk['rating']} ({link_more})\n\n"
-                )
-
-        except Exception as error:
-            self.logger.exception(f"{error} [URL]: {url}")
-
-        finally:
-            return reply
-
-    async def get_info_less_newstudio(self, session, url: str, is_single_request: bool) -> str:
-        """
-        Парсит url Newstudio
-
-        **Args**:
-
-         ``url``: url, который подлежит парсингу
-
-         ``is_single_request``: является ли запрос на получение одиночным или входит в состав для парсинга
-        """
-
-        reply = ''
-        try:
-            self.logger.debug(f'Starting {url}')
-            async with session.get(url, proxy=proxy) as response:
-                text = await response.text()
-                self.logger.debug(f'response.status {response.status} {url}')
-
-                if response.status != 200:
-                    return ''
-
-                soup = BeautifulSoup(text, 'html.parser')
-                pars_block = soup.select_one('.accordion-inner')
-
-                title = pars_block.select_one('.post-b').text
-                date_release = pars_block.select_one("a[title='Линк на это сообщение']").text
-                spl_date_release = date_release.split('-')
-                now = datetime.now()
-
-                is_new_release = False  # need for command /last newstudio release
-                if len(spl_date_release) == 3:
-                    date_release_month = spl_date_release[1]
-                    date_release_year = int(spl_date_release[2].split(' ')[0])
-
-                    if now.year == date_release_year or now.month == 1:
-                        if self.get_month_str(now.month) == date_release_month or \
-                                self.get_month_str(now.month - 1) == date_release_month:
-                            is_new_release = True
-                else:
-                    is_new_release = True
-
-                if is_new_release:
-                    if "WEBDLRip" not in title:
-                        torrent_tag = soup.select_one('.seedmed') or soup.select_one('.genmed')
-
-                        if not torrent_tag:
-                            for _ in range(5):
-                                self.logger.error(f"Not found torrent-file url: ", url)
-                                time.sleep(1 * 60)
-                                response = requests.get(url, proxies=apihelper.proxy)
-                                soup = BeautifulSoup(response.content, 'html.parser')
-                                torrent_tag = soup.select_one('.seedmed')
-                                if torrent_tag:
-                                    break
-
-                        if torrent_tag:
-                            torrent_dirty = torrent_tag.get('href')
-                            torrent = 'http://newstudio.tv/' + torrent_dirty
-                        else:
-                            torrent = '-'
-
-                        if is_single_request:
-                            reply += f"<b> \U0000203C РЕЛИЗ \U0000203C</b>\n"
-
-                        reply += (
-                            f"{title} <a href='{torrent}'> Торрент \U0001F4E5</a>\n\n"
-                        )
-
-        except Exception as error:
-            self.logger.exception(f"{error} [URL]: {url}")
-
-        finally:
-            return reply
-
-    def get_info_full_megashara(self, url) -> str:
-        """Возвращает подробное описание о релизе Megashara"""
-
-        response = requests.get(url, proxies=apihelper.proxy)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        pars_block = soup.select_one('#mid-side')
-
-        if response.status_code != 200 or pars_block.select_one('.big-error'):
-            return ''
-
-        table_2 = pars_block.select_one('.back-bg3 .info-table').extract()
-        title = pars_block.h1.text
-        photo = pars_block.select_one('.preview img')['src']
-
-        genre = self.get_next_element_text(pars_block, 'Жанр:')
-        country = self.get_next_element_text(pars_block, 'Студия/Страна:')
-        translate = self.get_next_element_text(pars_block, 'Перевод:')
-        video = self.get_next_element_text(table_2, 'Видео:')
-        audio = self.get_next_element_text(table_2, 'Звук:')
-        size = self.get_next_element_text(table_2, 'Размер:')
-
-        desc_dirty = pars_block.select_one('.back-bg3').text
-        desc_clean = re.sub("\n+", '\n', desc_dirty)
-        description = desc_clean.strip()
-
-        d_kinopoisk = self.get_rating_kinopoisk(pars_block)
-
-        if url.startswith(sites[KEY_MEGA_FILM]):
-            reply = (
-                f"<b>Фильм</b><a href='{photo}'>.</a>\n"
-                f"<a href='{url}'>{title}</a>\n"
-                f"Жанр: {genre}\n"
-                f"Студия/Страна: {country}\n"
-                f"Перевод: {translate}\n"
-                f"Видео: {video}\n"
-                f"Аудио: {audio}\n"
-                f"Размер: {size}\n"
-                f"Рейтинг: {d_kinopoisk['rating']}\n"
-                f"Трейлер: {d_kinopoisk['kinopoisk_url']}\n\n"
-                f"{description}\n"
-            )
-        else:
-            reply = (
-                f"<b>Сериал</b><a href='{photo}'>.</a>\n"
-                f"<a href='{url}'>{title}</a>\n"
-                f"Рейтинг: {d_kinopoisk['rating']}\n"
-                f"Трейлер: {d_kinopoisk['kinopoisk_url']}\n\n"
-                f"{description}\n"
-            )
-
-        return reply
-
     def get_info_full(self, url) -> str:
         """Возвращает подробное описание о релизе"""
 
         try:
-            if 'megashara' in url:
-                return self.get_info_full_megashara(url)
-            else:
-                return 'В разработке'
+            return str(Release(url, is_single_request=True, is_less_info=False).get_info())
 
         except Exception as error:
             self.logger.exception(f"{error} [URL]: {url}")
             return 'Ошибка при получении подробной информации'
 
-    def get_all_and_new_url(self) -> tuple:
-        """Определяет есть ли новые url и возвращает данные в виде кортежа по всем url и по новым"""
+    def get_new_urls(self) -> list:
+        """Определяет есть ли новые url и возвращает данные"""
 
-        data_urls: dict = self.load_json(self.file_data_url)
+        if self.data_urls is None:
+            data_urls: dict = self.load_json(self.file_data_url)
+        else:
+            data_urls = self.data_urls
+
         _new_urls: List[str] = []
 
         self.logger.info('Start update')
@@ -646,7 +820,7 @@ class KinoRelease:
 
         self.logger.info(f'Update done, new_data = {bool(_new_urls)}')
 
-        return data_urls, _new_urls
+        return _new_urls
 
     def listener(self, messages):
         """When new messages arrive TeleBot will call this function."""
@@ -671,8 +845,8 @@ class KinoRelease:
                 elif m.text.startswith(self.get_command_code('last')):
                     self.command_last(m)
 
-                elif m.text.startswith(self.get_command_code('ping_megashara')):
-                    self.command_ping_megashara(m)
+                elif m.text.startswith(self.get_command_code('ping_site')):
+                    self.command_ping_site(m)
 
                 elif m.text.startswith(self.get_command_code('more_film')):
                     self.command_more_film(m)
@@ -691,7 +865,7 @@ class KinoRelease:
 
         while True:
             try:
-                upd_data, new_data = self.get_all_and_new_url()
+                new_data = self.get_new_urls()
 
                 if new_data:
                     if skip_first_alert is True:
@@ -699,18 +873,17 @@ class KinoRelease:
                         skip_first_alert = False
                     else:
                         for url in new_data:
-                            if url.startswith(sites[KEY_MEGA_SERIAL]):
+                            if url.startswith(sites.get(KEY_MEGA_SERIAL, 'None')):
                                 continue
 
                             reply = self.get_info_less(url)
                             if reply:
-                                chats = self.load_json(self.file_data_chats)
-                                for chat in chats.keys():
+                                for chat in self.data_chats.keys():
                                     try:
                                         self.bot.send_message(int(chat), reply, parse_mode='HTML')
                                     except Exception as error:
                                         self.logger.info(f'Не могу отправить {int(chat)} {error}')
-                    self.dump_json(self.file_data_url, upd_data)
+                    self.dump_json(self.file_data_url, self.data_urls)
 
                 time.sleep(timeout_upd)
 
@@ -763,5 +936,5 @@ def parse_cli_args():
 if __name__ == '__main__':
     args = parse_cli_args()
 
-    bot = KinoRelease(debug=args.debug, logs_show=args.logs_show)
+    bot = KinoReleaseBot(debug=args.debug, logs_show=args.logs_show)
     bot.start(args.skip_first_alert)
