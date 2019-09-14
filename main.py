@@ -27,6 +27,8 @@ from settings import (
     timeout_upd,
     KEY_MEGA_FILM, KEY_MEGA_SERIAL, KEY_NEWSTUDIO, KEY_LORD_FILM,
     sites,
+    num_last_release_per_site,
+    num_pars_url_lordsfilm, num_pars_url_megashara, num_pars_url_newstudio
 )
 
 try:
@@ -499,38 +501,40 @@ class KinoReleaseBot:
         self.command_help(message)
 
     def command_help(self, message: Message):
-        help_text = "Доступны следующие команды: \n"
+        help_text = "<b>Доступны следующие команды: </b>\n"
 
-        indent = " " * 6
         commands = {
             f'{self.get_command_code("start")}': 'начать использовать бота',
 
             f'{self.get_command_code("help")}': 'показать доступные команды',
 
-            f'{self.get_command_code("last")} X': 'показать последние релизы, где\nX - опционально:\n'
-            f'{indent}{self.get_site_code("lord_film")} - последние релизы фильмов Lordsfilms\n'
-            f'{indent}{self.get_site_code("mega_film")} - последние релизы фильмов Megashara\n'
-            f'{indent}{self.get_site_code("mega_serial")} - последние релизы сериалов Megashara\n'
-            f'{indent}{self.get_site_code("newstudio")} - последние релизы из подписки сериалов Newstudio\n'
-            f'{indent}{self.get_site_code("all")} - все релизы в подписке\n'
-            f'(если X не указано, то выведет {self.get_site_code("lord_film")})\n',
-
-            f'{self.get_command_code("more_film")}_X_Y': 'показать полную информацию о фильме или сериале, где\n'
-                                                         'X - код сайта:\n'
-            f'{indent}{self.get_site_code("mega_film")} - megashara фильм,\n'
-            f'{indent}{self.get_site_code("mega_serial")} - megashara сериал,\n'
-                                                         'Y - id релиза ',
-
             f'{self.get_command_code("ip")}': 'показать ip и регион бота',
 
-            f'{self.get_command_code("ping_site")} X': 'получить статус сайта, где X - код сайта аналогично команде '
-            f'(если X не указано, то выведет для {self.get_site_code("lord_film")})\n',
+            f'{self.get_command_code("ping_site")} X': 'получить статус сайта, где X - код сайта '
+            f'(если X не указано, то выведет для {self.get_site_code("lord_film")})',
+
+            f'{self.get_command_code("last")} X': 'показать последние релизы, где\nX - код сайта '
+            f'(если X не указано, то выведет для {self.get_site_code("lord_film")})',
+
+            f'{self.get_command_code("more_film")}_X_Y': 'показать полную информацию о фильме или сериале, где\n'
+                                                         'X - код сайта, Y - id релиза ',
         }
 
         for key in commands:
             help_text += key + " - "
-            help_text += commands[key] + "\n"
-        self.bot.send_message(message.chat.id, help_text)
+            help_text += commands[key] + "\n\n"
+
+        help_text += (
+            f'<b>Коды сайтов:</b>\n'
+            f'{self.get_site_code("lord_film")} - релизы фильмов Lordsfilms\n'
+            f'{self.get_site_code("mega_film")} - релизы фильмов Megashara\n'
+            f'{self.get_site_code("mega_serial")} - релизы сериалов Megashara\n'
+            f'{self.get_site_code("newstudio")} - релизы из подписки сериалов Newstudio\n'
+            f'{self.get_site_code("all")} - релизы со всех сайтов в подписке '
+            f'(для команды {self.get_command_code("last")})\n'
+        )
+
+        self.bot.send_message(message.chat.id, help_text, parse_mode='HTML')
 
     def command_last(self, message: Message):
         """Выводит данные о последних релизах с указанных сайтов"""
@@ -578,15 +582,15 @@ class KinoReleaseBot:
             elif key == KEY_LORD_FILM:
                 reply += '(Lordsfilms)\n'
 
-            limit = 5
+            limit = num_last_release_per_site
             if isinstance(data[key], list):
-                count = limit if limit < len(data[key]) else len(data[key])
-                lst_urls = data[key][-count:]
+                amount = limit if limit < len(data[key]) else len(data[key])
+                lst_urls = data[key][-amount:]
             else:
                 lst_urls = []
                 for k_serial in data[key].keys():
-                    count = limit if limit < len(data[key][k_serial]) else len(data[key][k_serial])
-                    lst_urls.extend(data[key][k_serial][-count:])
+                    amount = limit if limit < len(data[key][k_serial]) else len(data[key][k_serial])
+                    lst_urls.extend(data[key][k_serial][-amount:])
 
             lst_info = self.get_info_less(lst_urls)
             if not lst_info:
@@ -673,7 +677,7 @@ class KinoReleaseBot:
 
         self.bot.reply_to(message, f'Хм.. может {self.get_command_code("help")}?')
 
-    def get_site_urls_for_parsing(self, site: str, count=9):
+    def get_site_urls_for_parsing(self, site: str):
         """parsing site, return list pars_urls"""
 
         pars_urls = []
@@ -690,16 +694,17 @@ class KinoReleaseBot:
                     return pars_urls
 
                 response = list(map(lambda x: f"{x.a['href']}",
-                                    pars_bl.findAll('div', class_='name-block')))[:count]
+                                    pars_bl.findAll('div', class_='name-block')))[:num_pars_url_megashara]
 
             elif 'newstudio' in site:
                 site_url = 'http://newstudio.tv'
                 response = list(map(lambda x: f"{site_url}{x.a['href'][1:]}",
-                                    soup.findAll('div', class_='topic-list')))[:count]
+                                    soup.findAll('div', class_='topic-list')))[:num_pars_url_lordsfilm]
 
             elif 'lordsfilm' in site:
                 response = list(map(lambda x: f"{x.a['href']}",
-                                    soup.find('div', id='dle-content').findAll('div', class_='short')))[:count]
+                                    soup.find('div', id='dle-content')
+                                    .findAll('div', class_='short')))[:num_pars_url_newstudio]
 
             pars_urls = list(reversed(response))
 
