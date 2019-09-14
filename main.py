@@ -116,11 +116,19 @@ class Release:
 
         return {'rating': rating, 'kinopoisk_url': kinopoisk_url}
 
-    def get_trailer_url_kinopoisk(self, title_en: str):
+    def get_trailer_url_kinopoisk(self, title: str, directors: list):
         """Получает ссылку на релиз на кинопоиске, если на кинопоиске есть трейлер"""
 
-        movie_list = Movie.objects.search(title_en)
+        movie_list = Movie.objects.search(title)
+        if not movie_list:
+            return None
+
         movie = movie_list[0]
+        # if directors:
+        #     movie.get_content('main_page')
+        #     if not any([d.name in directors for d in movie.directors]):
+        #         return None
+
         movie.get_content('trailers')
         return f"https://www.kinopoisk.ru/film/{movie.id}" if bool(movie.trailers) else None
 
@@ -254,10 +262,12 @@ class Release:
 
         if not self.is_less_info:
             title_en_bl = pars_block.find(string='Название:')
+            director_bl = pars_block.find(string='Режиссер:')
             translate_bl = pars_block.find(string='Перевод:')
             video_bl = pars_block.find(string='Качество:')
 
             title_en = title_en_bl.next_element.next_element.text if title_en_bl else None
+            directors = director_bl.next_element.next_element.text.split(',') if director_bl else None
             self.video = video_bl.next_element.next_element.text if video_bl else '-'
             self.translate = translate_bl.next_element if translate_bl else '-'
 
@@ -265,7 +275,8 @@ class Release:
             desc_clean = re.sub("\n+", '\n', desc_dirty)
             self.description = desc_clean.strip()
 
-            self.trailer_url = self.get_trailer_url_kinopoisk(title_en)
+            title_for_search = title_en if title_en else self.title
+            self.trailer_url = self.get_trailer_url_kinopoisk(title_for_search, directors)
 
         kind_code = KinoReleaseBot.get_site_code("lord_film")
         self.link_more = f'{KinoReleaseBot.get_command_code("more_film")}_{kind_code}_{url_split[1].split("-")[0]}'
