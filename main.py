@@ -710,12 +710,12 @@ class KinoReleaseBot:
             elif 'newstudio' in site:
                 site_url = 'http://newstudio.tv'
                 response = list(map(lambda x: f"{site_url}{x.a['href'][1:]}",
-                                    soup.findAll('div', class_='topic-list')))[:num_pars_url_lordsfilm]
+                                    soup.findAll('div', class_='topic-list')))[:num_pars_url_newstudio]
 
             elif 'lordsfilm' in site:
                 response = list(map(lambda x: f"{x.a['href']}",
                                     soup.find('div', id='dle-content')
-                                    .findAll('div', class_='short')))[:num_pars_url_newstudio]
+                                    .findAll('div', class_='short')))[:num_pars_url_lordsfilm]
 
             pars_urls = list(reversed(response))
 
