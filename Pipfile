@@ -10,7 +10,7 @@ beautifulsoup4 = "==4.7.0"
 pysocks = "==1.6.8"
 requests = "==2.20.0"
 pyTelegramBotAPI = "==3.6.6"
-aiohttp = "==3.5.4"
+aiohttp = "==3.7.4"
 kinopoiskpy = "*"
 
 [requires]
